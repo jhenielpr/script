@@ -2794,6 +2794,26 @@ espTab:CreateToggle({
     end,
 })
 
+espTab:CreateButton({
+    name = "Refresh Player ESP",
+    description = "Rebuild player nametags and role highlights only",
+    callback = function()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then
+                removeVisuals(player.Character)
+            end
+            playerRoleCache[player] = nil
+        end
+        refreshAllPlayers()
+        window:Toast({
+            title = "Player ESP",
+            subtitle = "Refreshed",
+            position = "Top",
+            duration = 2,
+        })
+    end,
+})
+
 espTab:CreateToggle({
     name = "Round HUD",
     description = "Show your role, round status, and active coin count",
