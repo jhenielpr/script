@@ -8,27 +8,198 @@ local Workspace = game:GetService("Workspace")
 
 
 -- ============================
--- RAYFIELD LOAD
+-- WINDUI LOAD
 -- ============================
-local Rayfield = loadstring(
-    game:HttpGet("https://sirius.menu/gen2")
-)()
+local WindUI = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
+))()
 
 -- ============================
 -- WINDOW
 -- ============================
-local window = Rayfield:CreateWindow({
-    name = "MM2 Enhanced",
-    subtitle = "MM2 utility suite",
-    theme = "cobalt",
-
-    configuration = {
-        autoSave = true,
-        autoLoad = true,
-        fileName = "MM2Enhanced",
-        customFolder = "MM2Enhanced",
-    },
+local window = WindUI:CreateWindow({
+    Title = "MM2 Enhanced",
+    SubTitle = "MM2 utility suite",
+    Icon = "shield",
+    Theme = "Dark",
+    Folder = "MM2Enhanced",
 })
+
+-- Compatibility layer keeps the existing feature callbacks intact while
+-- translating the old menu calls to WindUI components.
+local flagValues = {}
+
+function window:Get(name)
+    return flagValues[name]
+end
+
+function window:Notify(data)
+    return WindUI:Notify({
+        Title = data.title or data.Title or "MM2 Enhanced",
+        Content = data.content or data.Content or data.subtitle or "",
+        Duration = data.duration or data.Duration or 3,
+    })
+end
+
+window.Toast = window.Notify
+
+function window:ChangeTheme(theme)
+    pcall(function()
+        WindUI:SetTheme(theme)
+    end)
+end
+
+function window:ToggleHide()
+    pcall(function() self:Toggle() end)
+end
+
+function window:Save()
+    local ok, result = pcall(function()
+        self.CurrentConfig = self.ConfigManager:Config("MM2Enhanced")
+        return self.CurrentConfig:Save()
+    end)
+    return ok and result ~= false
+end
+
+function window:Load()
+    local ok, result = pcall(function()
+        self.CurrentConfig = self.ConfigManager:CreateConfig("MM2Enhanced")
+        return self.CurrentConfig:Load()
+    end)
+    return ok and result ~= false
+end
+
+function window:Unload()
+    pcall(function() WindUI:Destroy() end)
+    pcall(function() self:Destroy() end)
+end
+
+local function normalizeValue(value, fallback)
+    if type(value) == "table" then
+        return value[1] or fallback
+    end
+    return value == nil and fallback or value
+end
+
+function window:CreateTab(config)
+    local tab = self:Tab({
+        Title = config.name or config.Name,
+        Icon = config.icon or config.Icon,
+    })
+
+    function tab:CreateSection(section)
+        return self:Section({ Title = section.name or section.Name })
+    end
+
+    function tab:CreateToggle(element)
+        flagValues[element.flag] = element.value
+        return self:Toggle({
+            Title = element.name,
+            Desc = element.description,
+            Value = element.value,
+            Flag = element.flag,
+            Callback = function(value)
+                flagValues[element.flag] = value
+                if element.callback then element.callback(value) end
+            end,
+        })
+    end
+
+    function tab:CreateSlider(element)
+        flagValues[element.flag] = element.value
+        return self:Slider({
+            Title = element.name,
+            Desc = element.description,
+            Value = {
+                Min = element.range[1],
+                Max = element.range[2],
+                Default = element.value,
+            },
+            Step = element.increment,
+            Flag = element.flag,
+            Callback = function(value)
+                flagValues[element.flag] = value
+                if element.callback then element.callback(value) end
+            end,
+        })
+    end
+
+    function tab:CreateDropdown(element)
+        flagValues[element.flag] = normalizeValue(element.value, element.options[1])
+        return self:Dropdown({
+            Title = element.name,
+            Desc = element.description,
+            Values = element.options,
+            Value = flagValues[element.flag],
+            Multi = element.multiSelect == true,
+            Flag = element.flag,
+            Callback = function(value)
+                flagValues[element.flag] = normalizeValue(value, element.options[1])
+                if element.callback then element.callback(value) end
+            end,
+        })
+    end
+
+    function tab:CreateInput(element)
+        flagValues[element.flag] = element.value or ""
+        return self:Input({
+            Title = element.name,
+            Desc = element.description,
+            Value = element.value or "",
+            Placeholder = element.placeholder,
+            Flag = element.flag,
+            Callback = function(value)
+                flagValues[element.flag] = value
+                if element.callback then element.callback(value) end
+            end,
+        })
+    end
+
+    function tab:CreateKeybind(element)
+        flagValues[element.flag] = element.value
+        local keyValue = element.value
+        if typeof(keyValue) == "EnumItem" then
+            keyValue = keyValue.Name
+        end
+        return self:Keybind({
+            Title = element.name,
+            Desc = element.description,
+            Value = keyValue,
+            Flag = element.flag,
+            Callback = function(value)
+                flagValues[element.flag] = value
+                if element.callback then element.callback(value) end
+            end,
+        })
+    end
+
+    function tab:CreateButton(element)
+        return self:Button({
+            Title = element.name,
+            Desc = element.description,
+            Callback = element.callback,
+        })
+    end
+
+    function tab:CreateStat(element)
+        local paragraph = self:Paragraph({
+            Title = element.name,
+            Content = tostring(element.value or "") .. (element.suffix or ""),
+        })
+        return {
+            Set = function(_, value)
+                if paragraph and paragraph.Set then
+                    paragraph:Set({
+                        Title = element.name,
+                        Content = tostring(value) .. (element.suffix or ""),
+                    })
+                end
+            end,
+        }
+    end
+
+    return tab
+end
 
 -- ============================
 -- SETTINGS STATE
@@ -334,7 +505,7 @@ local function getFlag(name, fallback)
     return fallback
 end
 
--- Rayfield sliders sometimes pass a table or string — always normalize to number
+-- WindUI sliders sometimes pass a table or string — always normalize to number
 local function asNumber(value, fallback)
     if type(value) == "table" then
         value = value[1]
@@ -2211,6 +2382,71 @@ local function getVotePads()
     return cachedVotePads
 end
 
+local function getVoteTouchPart(character)
+    if not character then return nil end
+    return character:FindFirstChild("LeftFoot")
+        or character:FindFirstChild("Left Leg")
+        or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function tryTouchVotePad(pad)
+    if not pad or not pad.Parent or not pad:IsA("BasePart") then
+        return false
+    end
+
+    local fireTouch = firetouchinterest
+    if type(fireTouch) ~= "function" then
+        return false
+    end
+
+    local hasTouchInterest = pad:FindFirstChild("TouchInterest") ~= nil
+    if not hasTouchInterest then
+        local ok, transmitter = pcall(function()
+            return pad:FindFirstChildOfClass("TouchTransmitter")
+        end)
+        hasTouchInterest = ok and transmitter ~= nil
+    end
+    if not hasTouchInterest or pad.CanTouch == false then
+        return false
+    end
+
+    local character = LocalPlayer.Character
+    local toucher = getVoteTouchPart(character)
+    if not toucher or not toucher:IsA("BasePart") then
+        return false
+    end
+
+    local began = pcall(fireTouch, toucher, pad, 0)
+    pcall(fireTouch, toucher, pad, 1)
+    task.wait(0.1)
+    return began
+end
+
+local function activateVotePad(pad)
+    -- Use executor touch support first, without moving the character.
+    if tryTouchVotePad(pad) then
+        return true
+    end
+
+    -- Compatibility fallback for executors or pads without touch support.
+    local _, _, rootPart = getCharacterParts()
+    if not rootPart or not pad or not pad.Parent then
+        return false
+    end
+
+    local oldCFrame = rootPart.CFrame
+    local oldVelocity = rootPart.AssemblyLinearVelocity
+    local oldAngularVelocity = rootPart.AssemblyAngularVelocity
+    rootPart.CFrame = pad.CFrame * CFrame.new(0, 3, 0)
+    task.wait(0.15)
+    if rootPart.Parent then
+        rootPart.CFrame = oldCFrame
+        rootPart.AssemblyLinearVelocity = oldVelocity
+        rootPart.AssemblyAngularVelocity = oldAngularVelocity
+    end
+    return true
+end
+
 task.spawn(function()
     while uiRunning do
         local pads = getVotePads()
@@ -2237,9 +2473,7 @@ task.spawn(function()
             end
 
             if targetPad then
-                local _, _, rootPart = getCharacterParts()
-                if rootPart and targetPad.Pad then
-                    rootPart.CFrame = targetPad.Pad.CFrame * CFrame.new(0, 3, 0)
+                if activateVotePad(targetPad.Pad) then
                     lastVotedMapName = targetPad.Name
                 end
             end
@@ -2269,15 +2503,15 @@ end)
 -- ============================
 -- TABS
 -- ============================
-local movementTab = window:CreateTab({ name = "Movement", icon = 93364949241311 })
-local combatTab = window:CreateTab({ name = "Combat", icon = 93364949241311 })
-local farmTab = window:CreateTab({ name = "Farm", icon = 93364949241311 })
-local espTab = window:CreateTab({ name = "ESP", icon = 93364949241311 })
-local playersTab = window:CreateTab({ name = "Players", icon = 93364949241311 })
-local lobbyTab = window:CreateTab({ name = "Lobby", icon = 93364949241311 })
-local funTab = window:CreateTab({ name = "Fun", icon = 93364949241311 })
-local miscTab = window:CreateTab({ name = "Misc", icon = 93364949241311 })
-local settingsTab = window:CreateTab({ name = "Settings", icon = 93364949241311 })
+local movementTab = window:CreateTab({ name = "Movement", icon = "move" })
+local combatTab = window:CreateTab({ name = "Combat", icon = "swords" })
+local farmTab = window:CreateTab({ name = "Farm", icon = "coins" })
+local espTab = window:CreateTab({ name = "ESP", icon = "scan-eye" })
+local playersTab = window:CreateTab({ name = "Players", icon = "users" })
+local lobbyTab = window:CreateTab({ name = "Lobby", icon = "map" })
+local funTab = window:CreateTab({ name = "Fun", icon = "sparkles" })
+local miscTab = window:CreateTab({ name = "Misc", icon = "wrench" })
+local settingsTab = window:CreateTab({ name = "Settings", icon = "settings" })
 
 -- ============================
 -- MOVEMENT TAB
@@ -3054,7 +3288,7 @@ lobbyTab:CreateSection({ name = "Map Voting" })
 
 lobbyTab:CreateToggle({
     name = "Auto Vote",
-    description = "Move to the vote pad for the selected map",
+    description = "Touch the selected vote pad automatically",
     value = false,
     flag = "AutoVote",
     callback = function(enabled)
@@ -3080,7 +3314,7 @@ lobbyTab:CreateDropdown({
 
 lobbyTab:CreateButton({
     name = "Vote Now",
-    description = "Teleport to the matching vote pad",
+    description = "Touch the matching vote pad",
     callback = function()
         local pads = getVotePads()
         if #pads == 0 then
@@ -3106,9 +3340,7 @@ lobbyTab:CreateButton({
         end
 
         if targetPad then
-            local _, _, rootPart = getCharacterParts()
-            if rootPart then
-                rootPart.CFrame = targetPad.Pad.CFrame * CFrame.new(0, 3, 0)
+            if activateVotePad(targetPad.Pad) then
                 lastVotedMapName = targetPad.Name
                 window:Toast({
                     title = "Voted",
