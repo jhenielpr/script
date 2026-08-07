@@ -604,6 +604,26 @@ local function stopInvisibleAnim()
     end
 end
 
+local function normalizeLocalCharacterCollision(character)
+    if not character then return end
+
+    local root = character:FindFirstChild("HumanoidRootPart")
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            if part == root then
+                part.CanCollide = true
+            else
+                part.CanCollide = false
+            end
+        end
+    end
+end
+
+trackConnection(RunService.Stepped:Connect(function()
+    if scriptUnloaded then return end
+    normalizeLocalCharacterCollision(LocalPlayer.Character)
+end))
+
 local function setInvisibleCollision(enabled)
     if enabled then
         if invisibleCollisionConnection then return end
@@ -618,7 +638,8 @@ local function setInvisibleCollision(enabled)
                     if invisibleCollisionStates[part] == nil then
                         invisibleCollisionStates[part] = part.CanCollide
                     end
-                    part.CanCollide = false
+                    local root = character:FindFirstChild("HumanoidRootPart")
+                    part.CanCollide = part == root
                 end
             end
         end)
@@ -634,6 +655,7 @@ local function setInvisibleCollision(enabled)
             end
         end
         table.clear(invisibleCollisionStates)
+        normalizeLocalCharacterCollision(LocalPlayer.Character)
     end
 end
 
@@ -819,12 +841,6 @@ disableInvisible = function()
             hrp.CFrame = invisibleRealPos
         end
         invisibleRealPos = nil
-        -- Restore CanCollide
-        for _, desc in ipairs(character:GetDescendants()) do
-            if desc:IsA("BasePart") then
-                desc.CanCollide = true
-            end
-        end
     end
 end
 
@@ -833,13 +849,7 @@ local function maintainInvisibleCollisions(character)
     local root = character:FindFirstChild("HumanoidRootPart")
     for _, desc in ipairs(character:GetDescendants()) do
         if desc:IsA("BasePart") then
-            if desc == root then
-                -- HRP must stay collidable so you don't fall through the floor
-                if not desc.CanCollide then desc.CanCollide = true end
-            else
-                -- All other parts: non-collidable so you pass through players
-                if desc.CanCollide then desc.CanCollide = false end
-            end
+            desc.CanCollide = desc == root
         end
     end
 end
