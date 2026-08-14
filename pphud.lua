@@ -126,10 +126,10 @@ end
   }, {
       Utilities:Create("Frame", {
           Name = "Main",
-          Size = UDim2.new(0, 900, 0, 600),
+          Size = UDim2.new(0, 1080, 0, 720),
           BackgroundColor3 = Color3.fromRGB(255, 255, 255), -- Colors.Primary
           ClipsDescendants = true,
-          Position = UDim2.new(0, 400, 0, 150)
+          Position = UDim2.new(0, 420, 0, 160)
       }, {
           Utilities:Create("UIGradient", {
               Color = ColorSequence.new({
@@ -283,14 +283,29 @@ end
     })
   })
 
-  local consoleContainer = Console.ConsoleContainer
+  local consoleContainer = Console:FindFirstChild("ConsoleContainer")
+  if not consoleContainer then
+    consoleContainer = Instance.new("ScrollingFrame")
+    consoleContainer.Name = "ConsoleContainer"
+    consoleContainer.Size = UDim2.new(1, 0, 1, -24)
+    consoleContainer.Position = UDim2.new(0, 0, 0, 24)
+    consoleContainer.BackgroundTransparency = 1
+    consoleContainer.ScrollBarThickness = 0
+    consoleContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    consoleContainer.CanvasSize = UDim2.new()
+    consoleContainer.ZIndex = 11001
+    consoleContainer.Parent = Console
+    Instance.new("UIListLayout").Parent = consoleContainer
+  end
 
   local scrollSize
-  consoleContainer.UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    scrollSize = consoleContainer.UIListLayout.AbsoluteContentSize.Y
-
-    consoleContainer.CanvasPosition = Vector2.new(0, scrollSize)
-  end)
+  local listLayout = consoleContainer:FindFirstChildOfClass("UIListLayout")
+  if listLayout then
+    listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+      scrollSize = listLayout.AbsoluteContentSize.Y
+      consoleContainer.CanvasPosition = Vector2.new(0, scrollSize)
+    end)
+  end
 
   local bottomText = Window.Main.Bottom.BottomText
 
@@ -315,6 +330,14 @@ end
     consoleArgs.Text = consoleArgs.Text or "Message"
     consoleArgs.Color = consoleArgs.Color or Colors.PrimaryText
 
+    local holder = consoleContainer
+    if not holder or not holder.Parent then
+      holder = Console:FindFirstChild("ConsoleContainer")
+    end
+    if not holder then
+      return
+    end
+
     coloredMessage = not coloredMessage
 
     local currentDate = os.date("%X")
@@ -325,9 +348,9 @@ end
         Name = "ConsoleMessage",
         BackgroundColor3 = Colors.Divider,
         BackgroundTransparency = coloredMessage and 0 or 1,
-        Size = UDim2.new(0, 500, 0, 23),
+        Size = UDim2.new(1, 0, 0, 23),
         ZIndex = 11002,
-        Parent = Console.ConsoleContainer
+        Parent = holder
     }, {
         Utilities:Create("TextLabel", {
             Name = "MessageText",
@@ -360,11 +383,11 @@ end
 
   local SizeX = Instance.new("NumberValue", Window.Main)
   SizeX.Name = "X"
-  SizeX.Value = 900
+  SizeX.Value = 1080
 
   local SizeY = Instance.new("NumberValue", Window.Main)
   SizeY.Name = "Y"
-  SizeY.Value = 600
+  SizeY.Value = 720
 
   local function ResizeTabs()
     local TabSize = 1 / self.Tabs
@@ -565,7 +588,7 @@ end
       ClipsDescendants = false,
       ScrollBarThickness = 0,
       Parent = ContainerHolder,
-      Size = UDim2.new(.5, 0, 0, 525)
+      Size = UDim2.new(.5, 0, 1, -8)
       }, {
           Utilities:Create("UIListLayout"),
           Utilities:Create("UIPadding", {
@@ -583,7 +606,7 @@ end
       ClipsDescendants = false,
       ScrollBarThickness = 0,
       Parent = ContainerHolder,
-      Size = UDim2.new(.5, 0, 0, 525),
+      Size = UDim2.new(.5, 0, 1, -8),
       Position = UDim2.new(0, 450, 0, 0)
       }, {
           Utilities:Create("UIListLayout"),

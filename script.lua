@@ -38,7 +38,14 @@ function window:Get(name)
 end
 
 function window:Notify(data)
-    return rawWindow:Notify(data)
+    local ok, result = pcall(function()
+        return rawWindow:Notify(data)
+    end)
+    if not ok then
+        warn("[MM2 Enhanced] Notify: " .. tostring(result))
+        return
+    end
+    return result
 end
 
 window.Toast = window.Notify
@@ -917,18 +924,90 @@ local function playInvisibleOnCharacter(character)
     stopInvisibleAnim()
 
     local animationLoaded, animationError = playInvisibleAnimation(hum)
-    if not animationLoaded then
+    if animationLoaded then
+        invisibleOldHipHeight = hum.HipHeight
+        hum.HipHeight = Settings.InvisibleHipHeight
+        print("[Invisible] Keyframe animation active")
+    else
         warn("[Invisible] Emote animation unavailable: " .. tostring(animationError))
-        return false
     end
 
-    invisibleOldHipHeight = hum.HipHeight
-    hum.HipHeight = Settings.InvisibleHipHeight
     setInvisibleCollision(true)
+    invisibleRealPos = hrp.CFrame
 
-    print("[Invisible] Keyframe animation active")
+    -- Keep a local clone at the real stand position so you can still see yourself.
+    pcall(function()
+        if invisibleFakeChar then
+            invisibleFakeChar:Destroy()
+            invisibleFakeChar = nil
+        end
+        character.Archivable = true
+        local clone = character:Clone()
+        character.Archivable = false
+        if not clone then return end
+        clone.Name = "MM2FakeChar"
+        for _, v in ipairs(clone:GetDescendants()) do
+            if v:IsA("BaseScript") or v:IsA("ModuleScript") then
+                v:Destroy()
+            end
+        end
+        local cloneHum = clone:FindFirstChildWhichIsA("Humanoid")
+        if cloneHum then cloneHum:Destroy() end
+        for _, v in ipairs(clone:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.Anchored = true
+                v.CanCollide = false
+                v.CanTouch = false
+                v.CanQuery = false
+            end
+        end
+        clone.Parent = Workspace
+        invisibleFakeChar = clone
+    end)
+
+    -- Server sees you in the sky; locally we stay on the ground clone.
+    hrp.CFrame = CFrame.new(hrp.Position.X, 9999, hrp.Position.Z)
+
+    if invisibleAnimConnection then
+        invisibleAnimConnection:Disconnect()
+        invisibleAnimConnection = nil
+    end
+    invisibleAnimConnection = RunService.Heartbeat:Connect(function()
+        if not invisibleEnabled then return end
+        local live = LocalPlayer.Character
+        if not live then return end
+        local liveRoot = live:FindFirstChild("HumanoidRootPart")
+        local liveHum = live:FindFirstChildWhichIsA("Humanoid")
+        if not liveRoot or not liveHum then return end
+
+        if liveRoot.Position.Y < 9000 then
+            liveRoot.CFrame = CFrame.new(liveRoot.Position.X, 9999, liveRoot.Position.Z)
+        end
+
+        if not invisibleRealPos then
+            invisibleRealPos = CFrame.new(liveRoot.Position.X, 5, liveRoot.Position.Z)
+        end
+
+        local moveDir = liveHum.MoveDirection
+        if moveDir.Magnitude > 0 then
+            local look = CFrame.lookAt(invisibleRealPos.Position, invisibleRealPos.Position + moveDir)
+            invisibleRealPos = CFrame.new(invisibleRealPos.Position + moveDir * (liveHum.WalkSpeed * 0.016)) * look.Rotation
+        end
+
+        if invisibleFakeChar and invisibleFakeChar.Parent then
+            for _, part in ipairs(invisibleFakeChar:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    local realPart = live:FindFirstChild(part.Name, true)
+                    if realPart and realPart:IsA("BasePart") then
+                        local offset = liveRoot.CFrame:ToObjectSpace(realPart.CFrame)
+                        part.CFrame = invisibleRealPos * offset
+                    end
+                end
+            end
+        end
+    end)
+
     return true
-
 end
 
 --[[ Legacy desync fallback intentionally disabled.
@@ -1084,20 +1163,21 @@ local function enableInvisible()
             end
 
             local played = playInvisibleOnCharacter(character)
-            if not played then
-                window:Notify({
-                    title = "Invisible Failed",
-                    content = "Could not load the Invisible Me emote animation. Check console (F9).",
-                    duration = 5,
-                })
-            else
-                window:Toast({
-                    title = "Invisible",
-                    subtitle = "Animation playing",
-                    position = "Top",
-                    duration = 2,
-                })
-            end
+            pcall(function()
+                if not played then
+                    window:Notify({
+                        title = "Invisible Failed",
+                        content = "Could not start invisible.",
+                        duration = 5,
+                    })
+                else
+                    window:Toast({
+                        title = "Invisible",
+                        subtitle = "Active",
+                        duration = 2,
+                    })
+                end
+            end)
         end
 
     if LocalPlayer.Character then
