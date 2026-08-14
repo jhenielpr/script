@@ -312,6 +312,7 @@ local infectionActive, infectionConn
 local destroyRoundHud
 local stopAntiIdle
 local getCharacterParts, getRoot, getRole, getFlag, asNumber
+local hasTool, isSpectator, findPlayerByText
 local enableNoclip, enableInvisible, enableAntifling, enableAntiIdle
 local coinFarmLoop, gunFarmLoop, collectGun, applyFarmRendering
 local updateCoinESP, updateGunESP, refreshAllPlayers, updateRoundHud
@@ -578,7 +579,7 @@ getRoot = function(character)
     return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChildWhichIsA("BasePart")
 end
 
-local function hasTool(player, toolName)
+hasTool = function(player, toolName)
     local backpack = player:FindFirstChild("Backpack")
     if backpack and backpack:FindFirstChild(toolName) then return true end
     local character = player.Character
@@ -592,7 +593,7 @@ getRole = function(player)
     return "Innocent"
 end
 
-local function isSpectator(player)
+isSpectator = function(player)
     if not player then
         return true
     end
@@ -685,7 +686,7 @@ canUseFarmAutomation = function()
     return true
 end
 
-local function findPlayerByText(text)
+findPlayerByText = function(text)
     text = string.lower(text or "")
     if text == "" then return nil end
     local partialMatch
@@ -1161,6 +1162,8 @@ disableAntifling = function()
     end
 end
 
+end
+do
 -- ============================
 -- FLING ENGINE
 -- ============================
@@ -1486,6 +1489,8 @@ flingByMode = function(silent)
     end
 end
 
+end
+do
 -- ============================
 -- AIMBOT
 -- ============================
@@ -1811,6 +1816,8 @@ trackConnection(RunService.RenderStepped:Connect(function()
     end
 end))
 
+end
+do
 -- ============================
 -- MAP / COIN CACHE
 -- ============================
