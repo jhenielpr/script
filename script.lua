@@ -1,93 +1,24 @@
-local function missing(t, f, fallback)
-    if type(f) == t then
-        return f
-    end
-    return fallback
-end
+-- ============================================================
+-- MM2 Enhanced — Rayfield Gen2
+-- Line 1 must not call anything. Executors inject this file into
+-- CoreGui; Roblox locale then "runs" line 1. A function *definition*
+-- is fine. A call to a missing global is what printed "nil value".
+-- ============================================================
 
-cloneref = missing("function", cloneref, function(...) return ... end)
-sethidden = missing("function", sethiddenproperty or set_hidden_property or set_hidden_prop)
-gethidden = missing("function", gethiddenproperty or get_hidden_property or get_hidden_prop)
-queueteleport = missing("function", queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport))
-httprequest = missing("function", request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))
-everyClipboard = missing("function", setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set))
-setclipboard = everyClipboard
-firetouchinterest = missing("function", firetouchinterest)
-local waxwritefile, waxreadfile = writefile, readfile
-writefile = missing("function", waxwritefile) and function(file, data, safe)
-    if safe == true then
-        return pcall(waxwritefile, file, data)
-    end
-    waxwritefile(file, data)
-end
-readfile = missing("function", waxreadfile) and function(file, safe)
-    if safe == true then
-        return pcall(waxreadfile, file)
-    end
-    return waxreadfile(file)
-end
-isfile = missing("function", isfile, readfile and function(file)
-    local success, result = pcall(function()
-        return readfile(file)
-    end)
-    return success and result ~= nil and result ~= ""
-end)
-makefolder = missing("function", makefolder)
-isfolder = missing("function", isfolder)
-listfiles = missing("function", listfiles)
-getcustomasset = missing("function", getcustomasset or getsynasset)
-getconnections = missing("function", getconnections or get_signal_cons)
-
-local requiredExecutor = {
-    { name = "writefile", fn = writefile, why = "Rayfield config auto-save" },
-    { name = "readfile", fn = readfile, why = "Rayfield config load" },
-    { name = "isfile", fn = isfile, why = "Rayfield config load" },
-    { name = "makefolder", fn = makefolder, why = "Rayfield config folder" },
-}
-
-local optionalExecutor = {
-    { name = "firetouchinterest", fn = firetouchinterest, why = "Murderer kill-all knife hits" },
-    { name = "getconnections", fn = getconnections, why = "Anti Idle (Idled hook)" },
-    { name = "getcustomasset", fn = getcustomasset, why = "Los Pollos image" },
-    { name = "queue_on_teleport", fn = queueteleport, why = "Keep farm flags after kick/rejoin" },
-    { name = "setclipboard", fn = everyClipboard, why = "Copy JobId / PlaceId" },
-    { name = "listfiles", fn = listfiles, why = "Rayfield named config list" },
-    { name = "isfolder", fn = isfolder, why = "Rayfield folder checks" },
-}
-
-local missingRequired, missingOptional = {}, {}
-for _, item in ipairs(requiredExecutor) do
-    if type(item.fn) ~= "function" then
-        table.insert(missingRequired, item.name .. " (" .. item.why .. ")")
-    end
-end
-for _, item in ipairs(optionalExecutor) do
-    if type(item.fn) ~= "function" then
-        table.insert(missingOptional, item.name .. " (" .. item.why .. ")")
-    end
-end
-
-if #missingRequired > 0 then
-    warn("[MM2 Enhanced] Missing required executor functions:\n- " .. table.concat(missingRequired, "\n- "))
-end
-if #missingOptional > 0 then
-    warn("[MM2 Enhanced] Missing optional executor functions:\n- " .. table.concat(missingOptional, "\n- "))
-end
-
-local Players = cloneref(game:GetService("Players"))
-local UserInputService = cloneref(game:GetService("UserInputService"))
-local TweenService = cloneref(game:GetService("TweenService"))
-local RunService = cloneref(game:GetService("RunService"))
-local VirtualUser = cloneref(game:GetService("VirtualUser"))
-local TeleportService = cloneref(game:GetService("TeleportService"))
-local GuiService = cloneref(game:GetService("GuiService"))
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
 local LocalPlayer = Players.LocalPlayer
-local Workspace = cloneref(game:GetService("Workspace"))
+local Workspace = game:GetService("Workspace")
 
 getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
 -- ============================
--- RAYFIELD GEN2 (same CreateWindow style as the working v4.4 UI)
+-- RAYFIELD GEN2
 -- ============================
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
@@ -105,6 +36,32 @@ local window = Rayfield:CreateWindow({
 
 local flagValues = {}
 local loadingConfig = false
+
+local function pickFn(...)
+    for i = 1, select("#", ...) do
+        local fn = select(i, ...)
+        if type(fn) == "function" then
+            return fn
+        end
+    end
+    return nil
+end
+
+local queueteleport = pickFn(queue_on_teleport, syn and syn.queue_on_teleport, fluxus and fluxus.queue_on_teleport)
+local everyClipboard = pickFn(setclipboard, toclipboard, set_clipboard, Clipboard and Clipboard.set)
+local getcustomasset = pickFn(getcustomasset, getsynasset)
+local getconnections = pickFn(getconnections, get_signal_cons)
+
+local missingRequired, missingOptional = {}, {}
+if type(writefile) ~= "function" then table.insert(missingRequired, "writefile (Rayfield config auto-save)") end
+if type(readfile) ~= "function" then table.insert(missingRequired, "readfile (Rayfield config load)") end
+if type(isfile) ~= "function" then table.insert(missingRequired, "isfile (Rayfield config load)") end
+if type(makefolder) ~= "function" then table.insert(missingRequired, "makefolder (Rayfield config folder)") end
+if type(firetouchinterest) ~= "function" then table.insert(missingOptional, "firetouchinterest (knife kill-all)") end
+if type(getconnections) ~= "function" then table.insert(missingOptional, "getconnections (Anti Idle)") end
+if type(getcustomasset) ~= "function" then table.insert(missingOptional, "getcustomasset (Los Pollos)") end
+if type(queueteleport) ~= "function" then table.insert(missingOptional, "queue_on_teleport (farm rejoin)") end
+if type(everyClipboard) ~= "function" then table.insert(missingOptional, "setclipboard (copy JobId)") end
 
 -- ============================
 -- SETTINGS STATE
@@ -209,7 +166,7 @@ end
 local function sweepScriptGuis()
     local parents = {}
     pcall(function()
-        table.insert(parents, cloneref(game:GetService("CoreGui")))
+        table.insert(parents, game:GetService("CoreGui"))
     end)
     pcall(function()
         table.insert(parents, LocalPlayer:FindFirstChildOfClass("PlayerGui"))
@@ -2082,7 +2039,7 @@ local function getEspFolder()
     end
     local parent
     pcall(function()
-        parent = cloneref(game:GetService("CoreGui"))
+        parent = game:GetService("CoreGui")
     end)
     if not parent then
         parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or PlayerGui
