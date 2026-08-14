@@ -1,7 +1,3 @@
--- ============================================================
--- MM2 Enhanced — PPHUD
--- ============================================================
-
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -308,6 +304,12 @@ local cachedCoins, cachedVotePads, coinVisuals, gunDropVisuals
 local infectionActive, infectionConn
 local destroyRoundHud
 local stopAntiIdle
+local getCharacterParts, getRoot, getRole, getFlag, asNumber
+local enableNoclip, enableInvisible, enableAntifling, enableAntiIdle
+local coinFarmLoop, gunFarmLoop, collectGun, applyFarmRendering
+local updateCoinESP, updateGunESP, refreshAllPlayers, updateRoundHud
+local getAvailableCoins, flingByMode, canUseFarmAutomation
+local aimbotEnabled, aiming, aimbotTargetName, predictBox
 
 local function trackConnection(connection)
     if connection then
@@ -553,7 +555,8 @@ end
 -- ============================
 -- HELPERS
 -- ============================
-local function getCharacterParts(player)
+do
+getCharacterParts = function(player)
     player = player or LocalPlayer
     local character = player.Character
     if not character then return nil end
@@ -563,7 +566,7 @@ local function getCharacterParts(player)
     return character, humanoid, rootPart
 end
 
-local function getRoot(character)
+getRoot = function(character)
     if not character then return nil end
     return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChildWhichIsA("BasePart")
 end
@@ -576,7 +579,7 @@ local function hasTool(player, toolName)
     return false
 end
 
-local function getRole(player)
+getRole = function(player)
     if hasTool(player, "Knife") then return "Murderer" end
     if hasTool(player, "Gun") then return "Sheriff" end
     return "Innocent"
@@ -662,7 +665,7 @@ local function isLocalPlayerAlive()
         and humanoid.Health > 0
 end
 
-local function canUseFarmAutomation()
+canUseFarmAutomation = function()
     if not isLocalPlayerAlive() then
         return false, "You must be alive"
     end
@@ -692,7 +695,7 @@ local function findPlayerByText(text)
     return partialMatch
 end
 
-local function getFlag(name, fallback)
+getFlag = function(name, fallback)
     if scriptUnloaded then
         return fallback
     end
@@ -718,14 +721,14 @@ local function set3dRenderingEnabled(enabled)
 end
 
 -- Disable 3D rendering while farming when the Farm tab toggle is on (lowers CPU).
-local function applyFarmRendering()
+applyFarmRendering = function()
     local farmActive = getFlag("AutoCoins", false) or getFlag("AutoGunDrop", false)
     local noRender = getFlag("FarmNoRender", false)
     set3dRenderingEnabled(not (farmActive and noRender))
 end
 
 -- WindUI sliders sometimes pass a table or string — always normalize to number
-local function asNumber(value, fallback)
+asNumber = function(value, fallback)
     if type(value) == "table" then
         value = value[1]
     end
@@ -743,7 +746,7 @@ stopAntiIdle = function()
     end
 end
 
-local function enableAntiIdle()
+enableAntiIdle = function()
     if getconnections then
         for _, connection in ipairs(getconnections(LocalPlayer.Idled)) do
             pcall(function() connection:Disable() end)
@@ -778,7 +781,7 @@ end
 -- ============================
 -- NOCLIP (only flip parts that still collide)
 -- ============================
-local function enableNoclip()
+enableNoclip = function()
     if noclipConnection then return end
     noclipConnection = RunService.Stepped:Connect(function()
         local char = LocalPlayer.Character
@@ -1072,7 +1075,7 @@ local function maintainInvisibleCollisions(character)
     end
 end
 
-local function enableInvisible()
+enableInvisible = function()
     if invisibleEnabled then return end
     invisibleEnabled = true
 
@@ -1125,7 +1128,7 @@ end
 -- ============================
 -- ANTIFLING (HRP only — far cheaper than all descendants)
 -- ============================
-local function enableAntifling()
+enableAntifling = function()
     if antiflingConnection then return end
     antiflingConnection = RunService.Heartbeat:Connect(function()
         -- Cache players list to avoid repeated GetPlayers calls
@@ -1450,7 +1453,7 @@ advancedFling = function(targetPlayer, silent)
     end
 end
 
-local function flingByMode(silent)
+flingByMode = function(silent)
     local target
     if flingMode == "Murderer" then
         for _, p in ipairs(Players:GetPlayers()) do
@@ -1479,11 +1482,11 @@ end
 -- ============================
 -- AIMBOT
 -- ============================
-local aiming = false
-local aimbotEnabled = true
-local aimbotTargetName = ""
+aiming = false
+aimbotEnabled = true
+aimbotTargetName = ""
 local fovCircle = nil
-local predictBox = nil
+predictBox = nil
 
 local function destroyDrawing(obj)
     if not obj then
@@ -1904,7 +1907,7 @@ local function ensureCoinCache()
     end
 end
 
-local function getAvailableCoins()
+getAvailableCoins = function()
     ensureCoinCache()
     local coins = {}
     for coin in pairs(cachedCoins) do
@@ -2018,7 +2021,7 @@ local function createRoundHud()
     return gui
 end
 
-local function updateRoundHud()
+updateRoundHud = function()
     if not getFlag("RoundHUD", false) then
         if roundHudGui then destroyRoundHud() end
         return
@@ -2220,7 +2223,7 @@ local function waitForCoinCollection(coin)
     return false
 end
 
-local function coinFarmLoop()
+coinFarmLoop = function()
     if farmRunning then return end
     farmRunning = true
     applyFarmRendering()
@@ -2350,7 +2353,7 @@ local function tryTouchGun(gunPart)
     return waitForGunInBackpack(0.8)
 end
 
-local function collectGun()
+collectGun = function()
     if currentMode and currentMode ~= "gun" then return end
     local allowed = canUseFarmAutomation()
     if not allowed then return end
@@ -2398,7 +2401,7 @@ local function collectGun()
     currentTarget = nil
 end
 
-local function gunFarmLoop()
+gunFarmLoop = function()
     if gunFarmRunning then return end
     gunFarmRunning = true
     applyFarmRendering()
@@ -2648,7 +2651,7 @@ local function updatePlayer(player, force)
     end
 end
 
-local function refreshAllPlayers(force)
+refreshAllPlayers = function(force)
     for _, player in ipairs(Players:GetPlayers()) do
         updatePlayer(player, force == true)
     end
@@ -2734,7 +2737,7 @@ local function updateCoinVisual(coin, rootPos, showDistance)
     end
 end
 
-local function updateCoinESP(updateDistances)
+updateCoinESP = function(updateDistances)
     local enabled = getFlag("CoinESP", true) and getFlag("EnableESP", true)
     ensureCoinCache()
 
@@ -2808,7 +2811,7 @@ removeGunESP = function(part)
     end
 end
 
-local function updateGunESP()
+updateGunESP = function()
     local enabled = getFlag("GunESP", true) and getFlag("EnableESP", true)
 
     if not enabled then
@@ -3150,6 +3153,8 @@ task.spawn(function()
         task.wait(0.5)
     end
 end)
+
+end -- feature scope (keeps the chunk under Luau's 200-local limit)
 
 -- ============================
 -- TABS
