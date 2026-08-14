@@ -594,6 +594,9 @@ cachedCoins = {} -- [BasePart] = true
 local coinCacheDirty = true
 local mapScanAt = 0
 local MAP_SCAN_INTERVAL = 2
+local spectatorMapCf = nil
+local spectatorMapSize = nil
+local spectatorBoundsAt = 0
 
 -- Cached gun drop (avoids GetDescendants spam in gun ESP)
 local cachedGunDropPart = nil
@@ -661,30 +664,26 @@ isSpectator = function(player)
     end
 
     local lobby = Workspace:FindFirstChild("Lobby")
-    if lobby and (character:IsDescendantOf(lobby) or (getRoot(character) and getRoot(character):IsDescendantOf(lobby))) then
+    if lobby and character:IsDescendantOf(lobby) then
         return true
     end
 
-    -- Mid-round: if a map is loaded and they are clearly outside it, they are spectating.
-    -- Do not use the Lobby model's bounding box — it is often huge and tags everyone.
+    -- Mid-round: outside the cached map box = spectating.
+    -- Bounds are refreshed on the ESP tick so we do not GetBoundingBox per player.
     local map = cachedMap
     if map and map.Parent then
         if character:IsDescendantOf(map) then
             return false
         end
         local root = getRoot(character)
-        if root then
-            local ok, cf, size = pcall(function()
-                return map:GetBoundingBox()
-            end)
-            if ok and cf and size then
-                local localPos = cf:PointToObjectSpace(root.Position)
-                local inside = math.abs(localPos.X) <= (size.X * 0.5) + 25
-                    and math.abs(localPos.Y) <= (size.Y * 0.5) + 50
-                    and math.abs(localPos.Z) <= (size.Z * 0.5) + 25
-                if not inside then
-                    return true
-                end
+        if root and spectatorMapCf and spectatorMapSize then
+            local localPos = spectatorMapCf:PointToObjectSpace(root.Position)
+            local size = spectatorMapSize
+            local inside = math.abs(localPos.X) <= (size.X * 0.5) + 25
+                and math.abs(localPos.Y) <= (size.Y * 0.5) + 50
+                and math.abs(localPos.Z) <= (size.Z * 0.5) + 25
+            if not inside then
+                return true
             end
         end
     end
@@ -811,16 +810,17 @@ end
 -- A coin is active only while its visible mesh is still present.
 -- Coin_Server can contain CoinVisual/MainCoin at different nesting depths.
 local function isActiveCoin(coin)
-    if not coin or not coin.Parent then
+    if not coin or not coin.Parent or not coin:IsA("BasePart") then
         return false
     end
 
     local coinVisual = coin:FindFirstChild("CoinVisual", true)
     local mainCoin = coinVisual and coinVisual:FindFirstChild("MainCoin", true)
+    if mainCoin and mainCoin:IsA("BasePart") then
+        return mainCoin.Transparency < 1
+    end
 
-    return mainCoin
-        and mainCoin:IsA("MeshPart")
-        and mainCoin.Transparency < 1
+    return coin.Transparency < 1
 end
 
 -- ============================
@@ -2025,12 +2025,16 @@ end
 
 local function rebuildCoinCache()
     table.clear(cachedCoins)
-    if not cachedCoinContainer or not cachedCoinContainer.Parent then
+    local root = cachedCoinContainer
+    if not (root and root.Parent) then
+        root = cachedMap
+    end
+    if not (root and root.Parent) then
         coinCacheDirty = false
         return
     end
 
-    for _, obj in ipairs(cachedCoinContainer:GetDescendants()) do
+    for _, obj in ipairs(root:GetDescendants()) do
         if obj:IsA("BasePart") and obj.Name == "Coin_Server" then
             cachedCoins[obj] = true
         end
@@ -2634,10 +2638,9 @@ coinVisuals = {}
 gunDropVisuals = {}
 
 local espFolder
-local function getEspFolder()
-    if espFolder and espFolder.Parent then
-        return espFolder
-    end
+local espAdornFolder
+
+local function getEspParent()
     local parent
     pcall(function()
         if type(gethui) == "function" then
@@ -2652,6 +2655,14 @@ local function getEspFolder()
     if not parent then
         parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui")
     end
+    return parent
+end
+
+local function getEspFolder()
+    if espFolder and espFolder.Parent then
+        return espFolder
+    end
+    local parent = getEspParent()
     local gui = Instance.new("ScreenGui")
     gui.Name = "MM2EnhancedESP"
     gui.ResetOnSpawn = false
@@ -2670,10 +2681,32 @@ local function getEspFolder()
     return espFolder
 end
 
+local function getEspAdornFolder()
+    if espAdornFolder and espAdornFolder.Parent then
+        return espAdornFolder
+    end
+    local folder = Instance.new("Folder")
+    folder.Name = "MM2EnhancedAdorns"
+    pcall(function()
+        folder.Parent = getEspParent()
+    end)
+    if not folder.Parent then
+        pcall(function()
+            folder.Parent = Workspace
+        end)
+    end
+    espAdornFolder = folder
+    return espAdornFolder
+end
+
 destroyEspFolder = function()
     if espFolder then
         pcall(function() espFolder:Destroy() end)
         espFolder = nil
+    end
+    if espAdornFolder then
+        pcall(function() espAdornFolder:Destroy() end)
+        espAdornFolder = nil
     end
     table.clear(playerEsp)
     table.clear(coinVisuals)
@@ -2816,7 +2849,19 @@ local function hidePlayerVisuals(visual)
     if visual.billboard then visual.billboard.Enabled = false end
 end
 
-local function updatePlayer(player, force)
+local lastEspFlags = nil
+
+local function getEspFlags()
+    return {
+        enabled = getFlag("EnableESP", true),
+        nametags = getFlag("Nametags", true),
+        highlights = getFlag("Highlights", true),
+        showInnocent = getFlag("ShowInnocentNames", true),
+        spectator = getFlag("SpectatorESP", true),
+    }
+end
+
+local function updatePlayer(player, force, flags)
     if player == LocalPlayer then return end
 
     local character = player.Character
@@ -2825,11 +2870,12 @@ local function updatePlayer(player, force)
         return
     end
 
-    local enabled = getFlag("EnableESP", true)
-    local nametagsOn = getFlag("Nametags", true)
-    local highlightsOn = getFlag("Highlights", true)
-    local showInnocent = getFlag("ShowInnocentNames", true)
-    local spectatorOn = getFlag("SpectatorESP", true)
+    flags = flags or lastEspFlags or getEspFlags()
+    local enabled = flags.enabled
+    local nametagsOn = flags.nametags
+    local highlightsOn = flags.highlights
+    local showInnocent = flags.showInnocent
+    local spectatorOn = flags.spectator
     local alive = not isSpectator(player)
     local role = alive and getRole(player) or "Spectator"
     local displayName = player.DisplayName
@@ -2848,15 +2894,9 @@ local function updatePlayer(player, force)
         and playerEsp[player]
         and playerEsp[player].highlight
         and playerEsp[player].highlight.Parent
+        and playerEsp[player].billboard
+        and playerEsp[player].billboard.Parent
     then
-        local visual = playerEsp[player]
-        local adornee = getEspAdornee(character)
-        if visual.billboard and visual.billboard.Adornee ~= adornee then
-            visual.billboard.Adornee = adornee
-        end
-        if visual.highlight and visual.highlight.Adornee ~= character then
-            visual.highlight.Adornee = character
-        end
         return
     end
 
@@ -2872,8 +2912,6 @@ local function updatePlayer(player, force)
         displayName = displayName,
     }
 
-    stripLegacyEsp(character)
-
     if not enabled or (not alive and not spectatorOn) then
         hidePlayerVisuals(playerEsp[player])
         return
@@ -2883,15 +2921,13 @@ local function updatePlayer(player, force)
     local showTag = nametagsOn and (role ~= "Innocent" or showInnocent or not alive)
     local showHighlight = highlightsOn and (role ~= "Innocent" or not alive)
     local visual = ensurePlayerVisuals(player)
-    local adornee = getEspAdornee(character)
+    local adornee = visual.adornee or getEspAdornee(character)
+    visual.adornee = adornee
 
     if visual.highlight then
-        if character and visual.highlight.Parent ~= character then
-            pcall(function()
-                visual.highlight.Parent = character
-            end)
+        if visual.highlight.Adornee ~= character then
+            visual.highlight.Adornee = character
         end
-        visual.highlight.Adornee = character
         visual.highlight.FillColor = roleColor
         visual.highlight.OutlineColor = getStrokeColor(roleColor)
         visual.highlight.FillTransparency = alive and 0.5 or 0.7
@@ -2899,20 +2935,46 @@ local function updatePlayer(player, force)
     end
 
     if visual.billboard and visual.label then
-        visual.billboard.Adornee = adornee
+        if visual.billboard.Adornee ~= adornee then
+            visual.billboard.Adornee = adornee
+        end
         visual.billboard.Enabled = showTag and adornee ~= nil
         local desired = displayName .. "\n[" .. role .. "]"
         if visual.label.Text ~= desired then
             visual.label.Text = desired
         end
-        visual.label.TextColor3 = roleColor
-        visual.label.TextStrokeColor3 = getStrokeColor(roleColor)
+        if visual.label.TextColor3 ~= roleColor then
+            visual.label.TextColor3 = roleColor
+            visual.label.TextStrokeColor3 = getStrokeColor(roleColor)
+        end
+    end
+end
+
+local function refreshSpectatorBounds()
+    local now = os.clock()
+    if now - spectatorBoundsAt < 0.75 then
+        return
+    end
+    spectatorBoundsAt = now
+    spectatorMapCf = nil
+    spectatorMapSize = nil
+    local map = cachedMap
+    if map and map.Parent then
+        local ok, cf, size = pcall(function()
+            return map:GetBoundingBox()
+        end)
+        if ok then
+            spectatorMapCf = cf
+            spectatorMapSize = size
+        end
     end
 end
 
 refreshAllPlayers = function(force)
+    lastEspFlags = getEspFlags()
+    refreshSpectatorBounds()
     for _, player in ipairs(Players:GetPlayers()) do
-        updatePlayer(player, force == true)
+        updatePlayer(player, force == true, lastEspFlags)
     end
 end
 
@@ -2937,6 +2999,19 @@ removeCoinESP = function(coin)
     end
 end
 
+local function parentAdornment(adornment, adornee)
+    local folder = getEspAdornFolder()
+    local ok = pcall(function()
+        adornment.Parent = folder
+    end)
+    if not ok or not adornment.Parent then
+        pcall(function()
+            adornment.Parent = adornee
+        end)
+    end
+    return adornment.Parent ~= nil
+end
+
 local function updateCoinVisual(coin, rootPos, showDistance)
     if not isActiveCoin(coin) then
         removeCoinESP(coin)
@@ -2944,7 +3019,7 @@ local function updateCoinVisual(coin, rootPos, showDistance)
     end
 
     local visual = coinVisuals[coin]
-    if type(visual) ~= "table" or not visual.adornment or not visual.adornment.Parent or not visual.billboard or not visual.billboard.Parent then
+    if type(visual) ~= "table" or not visual.billboard or not visual.billboard.Parent then
         destroyEspObjects(visual)
         local folder = getEspFolder()
         local adornment = Instance.new("BoxHandleAdornment")
@@ -2955,7 +3030,7 @@ local function updateCoinVisual(coin, rootPos, showDistance)
         adornment.Size = coin.Size + Vector3.new(0.25, 0.25, 0.25)
         adornment.Color3 = COIN_ESP_COLOR
         adornment.Transparency = 0.35
-        adornment.Parent = folder
+        parentAdornment(adornment, coin)
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "CoinBillboard"
@@ -2983,7 +3058,9 @@ local function updateCoinVisual(coin, rootPos, showDistance)
         visual = { adornment = adornment, billboard = billboard, label = label }
         coinVisuals[coin] = visual
     else
-        visual.adornment.Adornee = coin
+        if visual.adornment then
+            visual.adornment.Adornee = coin
+        end
         visual.billboard.Adornee = coin
     end
 
@@ -3042,8 +3119,10 @@ local function getCachedGunDropPart()
     end
     cachedGunDropPart = nil
     local map = getCurrentMap()
-    if not map then return nil end
-    local gunObj = map:FindFirstChild("GunDrop", true)
+    local gunObj = map and map:FindFirstChild("GunDrop", true)
+    if not gunObj then
+        gunObj = Workspace:FindFirstChild("GunDrop", true)
+    end
     if not gunObj then return nil end
     local part
     if gunObj:IsA("BasePart") then
@@ -3090,7 +3169,7 @@ updateGunESP = function()
     if not gunPart then return end
 
     local visual = gunDropVisuals[gunPart]
-    if type(visual) ~= "table" or not visual.adornment or not visual.adornment.Parent then
+    if type(visual) ~= "table" or not visual.billboard or not visual.billboard.Parent then
         destroyEspObjects(visual)
         local folder = getEspFolder()
         local adornment = Instance.new("BoxHandleAdornment")
@@ -3101,7 +3180,7 @@ updateGunESP = function()
         adornment.Size = gunPart.Size + Vector3.new(0.4, 0.4, 0.4)
         adornment.Color3 = GUN_ESP_COLOR
         adornment.Transparency = 0.25
-        adornment.Parent = folder
+        parentAdornment(adornment, gunPart)
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "GunDropBillboard"
@@ -3129,7 +3208,9 @@ updateGunESP = function()
         visual = { adornment = adornment, billboard = billboard, label = label }
         gunDropVisuals[gunPart] = visual
     else
-        visual.adornment.Adornee = gunPart
+        if visual.adornment then
+            visual.adornment.Adornee = gunPart
+        end
         visual.billboard.Adornee = gunPart
     end
 
@@ -3229,16 +3310,15 @@ end))
 
 task.spawn(function()
     local espTick = 0
-    while uiRunning do
+    while uiRunning and not scriptUnloaded do
         espTick = espTick + 1
-        -- Role poll is cheap now; cache skips unchanged players.
-        refreshAllPlayers(false)
-        updateCoinESP(espTick % 2 == 0)
+        pcall(refreshAllPlayers, false)
         if espTick % 2 == 0 then
-            updateGunESP()
+            pcall(updateCoinESP, true)
+            pcall(updateGunESP)
         end
-        updateRoundHud()
-        task.wait(0.25)
+        pcall(updateRoundHud)
+        task.wait(0.4)
     end
 end)
 
