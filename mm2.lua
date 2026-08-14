@@ -771,7 +771,7 @@ applyFarmRendering = function()
     set3dRenderingEnabled(not (farmActive and noRender))
 end
 
--- WindUI sliders sometimes pass a table or string — always normalize to number
+-- WindUI sliders sometimes pass a table or string â€” always normalize to number
 asNumber = function(value, fallback)
     if type(value) == "table" then
         value = value[1]
@@ -810,17 +810,16 @@ end
 -- A coin is active only while its visible mesh is still present.
 -- Coin_Server can contain CoinVisual/MainCoin at different nesting depths.
 local function isActiveCoin(coin)
-    if not coin or not coin.Parent or not coin:IsA("BasePart") then
+    if not coin or not coin.Parent then
         return false
     end
 
     local coinVisual = coin:FindFirstChild("CoinVisual", true)
     local mainCoin = coinVisual and coinVisual:FindFirstChild("MainCoin", true)
-    if mainCoin and mainCoin:IsA("BasePart") then
-        return mainCoin.Transparency < 1
-    end
 
-    return coin.Transparency < 1
+    return mainCoin
+        and mainCoin:IsA("MeshPart")
+        and mainCoin.Transparency < 1
 end
 
 -- ============================
@@ -847,7 +846,7 @@ disableNoclip = function()
 end
 
 -- ============================
--- INVISIBLE — PlatformStand + stop all tracks (replicates to server)
+-- INVISIBLE â€” PlatformStand + stop all tracks (replicates to server)
 -- Body non-collide, HRP collidable.
 -- ============================
 
@@ -1007,7 +1006,7 @@ end
     local cloneHum = clone:FindFirstChildWhichIsA("Humanoid")
     if cloneHum then cloneHum:Destroy() end
 
-    -- Anchor all clone parts — no-collision, no physics
+    -- Anchor all clone parts â€” no-collision, no physics
     for _, v in ipairs(clone:GetDescendants()) do
         if v:IsA("BasePart") then
             v.Anchored = true
@@ -1020,7 +1019,7 @@ end
     clone.Parent = workspace
     invisibleFakeChar = clone
 
-    -- Teleport real character way up into the sky — server sees you there
+    -- Teleport real character way up into the sky â€” server sees you there
     -- Other players see nothing at your ground position
     hrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 9999, 0))
 
@@ -1171,7 +1170,7 @@ enableInvisible = function()
 end
 
 -- ============================
--- ANTIFLING (HRP only — far cheaper than all descendants)
+-- ANTIFLING (HRP only â€” far cheaper than all descendants)
 -- ============================
 enableAntifling = function()
     if antiflingConnection then return end
@@ -2025,16 +2024,12 @@ end
 
 local function rebuildCoinCache()
     table.clear(cachedCoins)
-    local root = cachedCoinContainer
-    if not (root and root.Parent) then
-        root = cachedMap
-    end
-    if not (root and root.Parent) then
+    if not cachedCoinContainer or not cachedCoinContainer.Parent then
         coinCacheDirty = false
         return
     end
 
-    for _, obj in ipairs(root:GetDescendants()) do
+    for _, obj in ipairs(cachedCoinContainer:GetDescendants()) do
         if obj:IsA("BasePart") and obj.Name == "Coin_Server" then
             cachedCoins[obj] = true
         end
@@ -2628,388 +2623,237 @@ gunFarmLoop = function()
         applyFarmRendering()
     end)
 end
-
 -- ============================
--- ESP SYSTEM (folder + Adornee, flag-aware cache)
+-- ESP SYSTEM (event-driven + throttled) restored from 7a91448
+-- Highlights / nametags parented to the character, coins, and gun drop.
 -- ============================
 local playerRoleCache = {}
-local playerEsp = {}
 coinVisuals = {}
 gunDropVisuals = {}
 
-local espFolder
-local espAdornFolder
-
-local function getEspParent()
-    local parent
-    pcall(function()
-        if type(gethui) == "function" then
-            parent = gethui()
-        end
-    end)
-    if not parent then
-        pcall(function()
-            parent = game:GetService("CoreGui")
-        end)
-    end
-    if not parent then
-        parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui")
-    end
-    return parent
-end
-
-local function getEspFolder()
-    if espFolder and espFolder.Parent then
-        return espFolder
-    end
-    local parent = getEspParent()
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "MM2EnhancedESP"
-    gui.ResetOnSpawn = false
-    gui.IgnoreGuiInset = true
-    gui.DisplayOrder = 1e6
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    pcall(function()
-        gui.Parent = parent
-    end)
-    if not gui.Parent and LocalPlayer then
-        pcall(function()
-            gui.Parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 1)
-        end)
-    end
-    espFolder = gui
-    return espFolder
-end
-
-local function getEspAdornFolder()
-    if espAdornFolder and espAdornFolder.Parent then
-        return espAdornFolder
-    end
-    local folder = Instance.new("Folder")
-    folder.Name = "MM2EnhancedAdorns"
-    pcall(function()
-        folder.Parent = getEspParent()
-    end)
-    if not folder.Parent then
-        pcall(function()
-            folder.Parent = Workspace
-        end)
-    end
-    espAdornFolder = folder
-    return espAdornFolder
-end
-
 destroyEspFolder = function()
-    if espFolder then
-        pcall(function() espFolder:Destroy() end)
-        espFolder = nil
+    for _, player in ipairs(Players:GetPlayers()) do
+        pcall(removeVisuals, player)
     end
-    if espAdornFolder then
-        pcall(function() espAdornFolder:Destroy() end)
-        espAdornFolder = nil
+    table.clear(playerRoleCache)
+    for coin in pairs(coinVisuals) do
+        pcall(removeCoinESP, coin)
     end
-    table.clear(playerEsp)
     table.clear(coinVisuals)
+    for part in pairs(gunDropVisuals) do
+        pcall(removeGunESP, part)
+    end
     table.clear(gunDropVisuals)
-end
-
-local function stripLegacyEsp(character)
-    if not character then return end
-    local head = character:FindFirstChild("Head")
-    if head then
-        local billboard = head:FindFirstChild("RoleName")
-        if billboard then billboard:Destroy() end
+    local folder = game:GetService("CoreGui"):FindFirstChild("MM2EnhancedESP")
+        or (LocalPlayer:FindFirstChildWhichIsA("PlayerGui") and LocalPlayer:FindFirstChildWhichIsA("PlayerGui"):FindFirstChild("MM2EnhancedESP"))
+    if folder then
+        pcall(function() folder:Destroy() end)
     end
-    local highlight = character:FindFirstChild("RoleHighlight")
-    if highlight then highlight:Destroy() end
-    local coinH = character:FindFirstChild("CoinHighlight")
-    if coinH then coinH:Destroy() end
-end
-
-local function destroyEspObjects(visual)
-    if not visual then return end
-    if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
-    if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
-    if visual.adornment then pcall(function() visual.adornment:Destroy() end) end
-end
-
-local function getEspAdornee(character)
-    if not character then return nil end
-    return character:FindFirstChild("Head")
-        or character:FindFirstChild("HumanoidRootPart")
-        or character:FindFirstChildWhichIsA("BasePart")
-end
-
-local function ensurePlayerVisuals(player)
-    local character = player.Character
-    local visual = playerEsp[player]
-    local highlightOk = visual
-        and visual.highlight
-        and visual.highlight.Parent
-        and (visual.highlight.Parent == character or visual.highlight.Adornee == character)
-    local billboardOk = visual and visual.billboard and visual.billboard.Parent
-    if highlightOk and billboardOk then
-        return visual
+    local adorns = game:GetService("CoreGui"):FindFirstChild("MM2EnhancedAdorns")
+    if adorns then
+        pcall(function() adorns:Destroy() end)
     end
-
-    if visual then
-        if not highlightOk then
-            if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
-            visual.highlight = nil
-        end
-        if not billboardOk then
-            if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
-            visual.billboard = nil
-            visual.label = nil
-        end
-    else
-        visual = {}
-        playerEsp[player] = visual
-    end
-
-    local folder = getEspFolder()
-    if not highlightOk then
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "MM2RH"
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillTransparency = 0.55
-        highlight.OutlineTransparency = 0
-        highlight.Enabled = false
-        highlight.Adornee = character
-        if character then
-            highlight.Parent = character
-        else
-            highlight.Parent = folder
-        end
-        visual.highlight = highlight
-    end
-
-    if not billboardOk then
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "RoleName_" .. player.UserId
-        billboard.Size = UDim2.fromOffset(220, 44)
-        billboard.StudsOffset = Vector3.new(0, 2.8, 0)
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 1000
-        billboard.LightInfluence = 0
-        billboard.ResetOnSpawn = false
-        billboard.Enabled = false
-        billboard.Parent = folder
-
-        local label = Instance.new("TextLabel")
-        label.Name = "TextLabel"
-        label.Size = UDim2.fromScale(1, 1)
-        label.BackgroundTransparency = 1
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 14
-        label.TextWrapped = true
-        label.TextStrokeTransparency = 0
-        label.Parent = billboard
-
-        visual.billboard = billboard
-        visual.label = label
-    end
-
-    return visual
 end
 
 removeVisuals = function(playerOrCharacter)
-    local player = playerOrCharacter
-    if typeof(playerOrCharacter) == "Instance" and playerOrCharacter:IsA("Model") then
-        for tracked, data in pairs(playerRoleCache) do
-            if data.character == playerOrCharacter then
-                player = tracked
-                break
-            end
-        end
-        stripLegacyEsp(playerOrCharacter)
-        if typeof(player) ~= "Instance" or not player:IsA("Player") then
-            return
+    local character = playerOrCharacter
+    if typeof(playerOrCharacter) == "Instance" and playerOrCharacter:IsA("Player") then
+        character = playerOrCharacter.Character
+        playerRoleCache[playerOrCharacter] = nil
+    end
+    if not character then
+        return
+    end
+    local head = character:FindFirstChild("Head")
+    if head then
+        local billboard = head:FindFirstChild("RoleName")
+        if billboard then
+            billboard:Destroy()
         end
     end
+    local highlight = character:FindFirstChild("RoleHighlight")
+    if highlight then
+        highlight:Destroy()
+    end
+    local mm2 = character:FindFirstChild("MM2RH")
+    if mm2 then
+        mm2:Destroy()
+    end
+end
 
-    if typeof(player) == "Instance" and player:IsA("Player") then
-        destroyEspObjects(playerEsp[player])
-        playerEsp[player] = nil
-        if player.Character then
-            stripLegacyEsp(player.Character)
+local function updatePlayer(player)
+    if player == LocalPlayer then
+        return
+    end
+    local character = player.Character
+    if not character then
+        return
+    end
+
+    if player:GetAttribute("Alive") ~= true then
+        if not getFlag("EnableESP", true) or not getFlag("SpectatorESP", true) then
+            removeVisuals(character)
+            playerRoleCache[player] = nil
+            return
         end
+
+        local head = character:FindFirstChild("Head")
+        if head then
+            local billboard = head:FindFirstChild("RoleName")
+            if not billboard then
+                billboard = Instance.new("BillboardGui")
+                billboard.Name = "RoleName"
+                billboard.Size = UDim2.fromOffset(220, 44)
+                billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+                billboard.AlwaysOnTop = true
+                billboard.MaxDistance = 1000
+                billboard.LightInfluence = 0
+                billboard.Parent = head
+
+                local label = Instance.new("TextLabel")
+                label.Name = "TextLabel"
+                label.Size = UDim2.fromScale(1, 1)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 14
+                label.TextStrokeTransparency = 0
+                label.TextStrokeColor3 = getStrokeColor(SPECTATOR_COLOR)
+                label.Parent = billboard
+            end
+            local label = billboard:FindFirstChild("TextLabel")
+            if label then
+                label.Text = player.DisplayName .. "\n[Spectator]"
+                label.TextColor3 = SPECTATOR_COLOR
+                label.TextStrokeColor3 = getStrokeColor(SPECTATOR_COLOR)
+            end
+        end
+
+        local highlight = character:FindFirstChild("RoleHighlight")
+        if not highlight then
+            highlight = Instance.new("Highlight")
+            highlight.Name = "RoleHighlight"
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.FillTransparency = 0.7
+            highlight.OutlineTransparency = 0
+            highlight.Parent = character
+        end
+        highlight.FillColor = SPECTATOR_COLOR
+        highlight.OutlineColor = getStrokeColor(SPECTATOR_COLOR)
+        playerRoleCache[player] = { role = "Spectator", character = character }
+        return
+    end
+
+    if not getFlag("EnableESP", true) then
+        removeVisuals(character)
         playerRoleCache[player] = nil
         return
     end
 
-    if typeof(playerOrCharacter) == "Instance" then
-        stripLegacyEsp(playerOrCharacter)
-    end
-end
-
-local function hidePlayerVisuals(visual)
-    if not visual then return end
-    if visual.highlight then visual.highlight.Enabled = false end
-    if visual.billboard then visual.billboard.Enabled = false end
-end
-
-local lastEspFlags = nil
-
-local function getEspFlags()
-    return {
-        enabled = getFlag("EnableESP", true),
-        nametags = getFlag("Nametags", true),
-        highlights = getFlag("Highlights", true),
-        showInnocent = getFlag("ShowInnocentNames", true),
-        spectator = getFlag("SpectatorESP", true),
-    }
-end
-
-local function updatePlayer(player, force, flags)
-    if player == LocalPlayer then return end
-
-    local character = player.Character
-    if not character or not character.Parent then
-        hidePlayerVisuals(playerEsp[player])
-        return
-    end
-
-    flags = flags or lastEspFlags or getEspFlags()
-    local enabled = flags.enabled
-    local nametagsOn = flags.nametags
-    local highlightsOn = flags.highlights
-    local showInnocent = flags.showInnocent
-    local spectatorOn = flags.spectator
-    local alive = not isSpectator(player)
-    local role = alive and getRole(player) or "Spectator"
-    local displayName = player.DisplayName
+    local role = getRole(player)
+    local roleColor = ROLE_COLORS[role]
 
     local cached = playerRoleCache[player]
-    if not force and cached
-        and cached.role == role
-        and cached.character == character
-        and cached.alive == alive
-        and cached.enabled == enabled
-        and cached.nametags == nametagsOn
-        and cached.highlights == highlightsOn
-        and cached.showInnocent == showInnocent
-        and cached.spectator == spectatorOn
-        and cached.displayName == displayName
-        and playerEsp[player]
-        and playerEsp[player].highlight
-        and playerEsp[player].highlight.Parent
-        and playerEsp[player].billboard
-        and playerEsp[player].billboard.Parent
-    then
+    if cached and cached.role == role and cached.character == character then
         return
     end
+    playerRoleCache[player] = { role = role, character = character }
 
-    playerRoleCache[player] = {
-        role = role,
-        character = character,
-        alive = alive,
-        enabled = enabled,
-        nametags = nametagsOn,
-        highlights = highlightsOn,
-        showInnocent = showInnocent,
-        spectator = spectatorOn,
-        displayName = displayName,
-    }
+    if getFlag("Nametags", true) and (role ~= "Innocent" or getFlag("ShowInnocentNames", true)) then
+        local head = character:FindFirstChild("Head")
+        if head then
+            local billboard = head:FindFirstChild("RoleName")
+            if not billboard then
+                billboard = Instance.new("BillboardGui")
+                billboard.Name = "RoleName"
+                billboard.Size = UDim2.fromOffset(220, 44)
+                billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+                billboard.AlwaysOnTop = true
+                billboard.MaxDistance = 1000
+                billboard.LightInfluence = 0
+                billboard.Parent = head
 
-    if not enabled or (not alive and not spectatorOn) then
-        hidePlayerVisuals(playerEsp[player])
-        return
+                local label = Instance.new("TextLabel")
+                label.Name = "TextLabel"
+                label.Size = UDim2.fromScale(1, 1)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextSize = 14
+                label.TextWrapped = true
+                label.TextStrokeTransparency = 0
+                label.TextStrokeColor3 = getStrokeColor(roleColor)
+                label.TextColor3 = roleColor
+                label.Parent = billboard
+            end
+            local label = billboard:FindFirstChild("TextLabel")
+            if label then
+                local desired = player.DisplayName .. "\n[" .. role .. "]"
+                if label.Text ~= desired then
+                    label.Text = desired
+                end
+                if label.TextColor3 ~= roleColor then
+                    label.TextColor3 = roleColor
+                end
+                label.TextStrokeColor3 = getStrokeColor(roleColor)
+            end
+        end
+    else
+        local head = character:FindFirstChild("Head")
+        if head then
+            local billboard = head:FindFirstChild("RoleName")
+            if billboard then
+                billboard:Destroy()
+            end
+        end
     end
 
-    local roleColor = ROLE_COLORS[role] or SPECTATOR_COLOR
-    local showTag = nametagsOn and (role ~= "Innocent" or showInnocent or not alive)
-    local showHighlight = highlightsOn and (role ~= "Innocent" or not alive)
-    local visual = ensurePlayerVisuals(player)
-    local adornee = visual.adornee or getEspAdornee(character)
-    visual.adornee = adornee
-
-    if visual.highlight then
-        if visual.highlight.Adornee ~= character then
-            visual.highlight.Adornee = character
+    if getFlag("Highlights", true) and role ~= "Innocent" then
+        local highlight = character:FindFirstChild("RoleHighlight")
+        if not highlight then
+            highlight = Instance.new("Highlight")
+            highlight.Name = "RoleHighlight"
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.FillTransparency = 0.5
+            highlight.OutlineTransparency = 0
+            highlight.Parent = character
         end
-        visual.highlight.FillColor = roleColor
-        visual.highlight.OutlineColor = getStrokeColor(roleColor)
-        visual.highlight.FillTransparency = alive and 0.5 or 0.7
-        visual.highlight.Enabled = showHighlight
-    end
-
-    if visual.billboard and visual.label then
-        if visual.billboard.Adornee ~= adornee then
-            visual.billboard.Adornee = adornee
+        if highlight.FillColor ~= roleColor then
+            highlight.FillColor = roleColor
         end
-        visual.billboard.Enabled = showTag and adornee ~= nil
-        local desired = displayName .. "\n[" .. role .. "]"
-        if visual.label.Text ~= desired then
-            visual.label.Text = desired
-        end
-        if visual.label.TextColor3 ~= roleColor then
-            visual.label.TextColor3 = roleColor
-            visual.label.TextStrokeColor3 = getStrokeColor(roleColor)
-        end
-    end
-end
-
-local function refreshSpectatorBounds()
-    local now = os.clock()
-    if now - spectatorBoundsAt < 0.75 then
-        return
-    end
-    spectatorBoundsAt = now
-    spectatorMapCf = nil
-    spectatorMapSize = nil
-    local map = cachedMap
-    if map and map.Parent then
-        local ok, cf, size = pcall(function()
-            return map:GetBoundingBox()
-        end)
-        if ok then
-            spectatorMapCf = cf
-            spectatorMapSize = size
+        highlight.OutlineColor = getStrokeColor(roleColor)
+    else
+        local highlight = character:FindFirstChild("RoleHighlight")
+        if highlight then
+            highlight:Destroy()
         end
     end
 end
 
 refreshAllPlayers = function(force)
-    lastEspFlags = getEspFlags()
-    refreshSpectatorBounds()
+    if force then
+        table.clear(playerRoleCache)
+    end
     for _, player in ipairs(Players:GetPlayers()) do
-        updatePlayer(player, force == true, lastEspFlags)
+        updatePlayer(player)
     end
-end
-
-local function destroyTrackedVisual(store, key)
-    local visual = store[key]
-    if visual == true then
-        store[key] = nil
-        return
-    end
-    destroyEspObjects(visual)
-    store[key] = nil
 end
 
 removeCoinESP = function(coin)
-    if not coin then return end
-    destroyTrackedVisual(coinVisuals, coin)
-    if coin.Parent then
-        local highlight = coin:FindFirstChild("CoinHighlight")
-        if highlight then highlight:Destroy() end
-        local billboard = coin:FindFirstChild("CoinBillboard")
-        if billboard then billboard:Destroy() end
+    if not coin then
+        return
     end
-end
-
-local function parentAdornment(adornment, adornee)
-    local folder = getEspAdornFolder()
-    local ok = pcall(function()
-        adornment.Parent = folder
-    end)
-    if not ok or not adornment.Parent then
-        pcall(function()
-            adornment.Parent = adornee
-        end)
+    local highlight = coin:FindFirstChild("CoinHighlight")
+    if highlight then
+        highlight:Destroy()
     end
-    return adornment.Parent ~= nil
+    local billboard = coin:FindFirstChild("CoinBillboard")
+    if billboard then
+        billboard:Destroy()
+    end
+    local box = coin:FindFirstChild("CoinBox")
+    if box then
+        box:Destroy()
+    end
+    coinVisuals[coin] = nil
 end
 
 local function updateCoinVisual(coin, rootPos, showDistance)
@@ -3018,59 +2862,56 @@ local function updateCoinVisual(coin, rootPos, showDistance)
         return
     end
 
-    local visual = coinVisuals[coin]
-    if type(visual) ~= "table" or not visual.billboard or not visual.billboard.Parent then
-        destroyEspObjects(visual)
-        local folder = getEspFolder()
-        local adornment = Instance.new("BoxHandleAdornment")
-        adornment.Name = "CoinBox"
-        adornment.Adornee = coin
-        adornment.AlwaysOnTop = true
-        adornment.ZIndex = 8
-        adornment.Size = coin.Size + Vector3.new(0.25, 0.25, 0.25)
-        adornment.Color3 = COIN_ESP_COLOR
-        adornment.Transparency = 0.35
-        parentAdornment(adornment, coin)
-
-        local billboard = Instance.new("BillboardGui")
-        billboard.Name = "CoinBillboard"
-        billboard.Size = UDim2.fromOffset(120, 36)
-        billboard.StudsOffset = Vector3.new(0, 1.5, 0)
-        billboard.AlwaysOnTop = true
-        billboard.MaxDistance = 1000
-        billboard.LightInfluence = 0
-        billboard.ResetOnSpawn = false
-        billboard.Adornee = coin
-        billboard.Parent = folder
-
-        local label = Instance.new("TextLabel")
-        label.Name = "TextLabel"
-        label.Size = UDim2.fromScale(1, 1)
-        label.BackgroundTransparency = 1
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 13
-        label.TextColor3 = COIN_ESP_COLOR
-        label.TextStrokeTransparency = 0
-        label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
-        label.Text = "COIN"
-        label.Parent = billboard
-
-        visual = { adornment = adornment, billboard = billboard, label = label }
-        coinVisuals[coin] = visual
-    else
-        if visual.adornment then
-            visual.adornment.Adornee = coin
-        end
-        visual.billboard.Adornee = coin
+    local highlight = coin:FindFirstChild("CoinHighlight")
+    if not highlight then
+        highlight = Instance.new("Highlight")
+        highlight.Name = "CoinHighlight"
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = COIN_ESP_COLOR
+        highlight.FillTransparency = 0.35
+        highlight.OutlineColor = getStrokeColor(COIN_ESP_COLOR)
+        highlight.OutlineTransparency = 0
+        highlight.Parent = coin
     end
 
-    if showDistance and visual.label and rootPos then
-        local dist = math.floor((rootPos - coin.Position).Magnitude + 0.5)
-        local newText = string.format("COIN\n%d studs", dist)
-        if visual.label.Text ~= newText then
-            visual.label.Text = newText
+    if showDistance then
+        local billboard = coin:FindFirstChild("CoinBillboard")
+        if not billboard then
+            billboard = Instance.new("BillboardGui")
+            billboard.Name = "CoinBillboard"
+            billboard.Size = UDim2.fromOffset(120, 36)
+            billboard.StudsOffset = Vector3.new(0, 1.5, 0)
+            billboard.AlwaysOnTop = true
+            billboard.MaxDistance = 1000
+            billboard.LightInfluence = 0
+            billboard.Parent = coin
+
+            local label = Instance.new("TextLabel")
+            label.Name = "TextLabel"
+            label.Size = UDim2.fromScale(1, 1)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamBold
+            label.TextSize = 13
+            label.TextColor3 = COIN_ESP_COLOR
+            label.TextStrokeTransparency = 0
+            label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
+            label.Text = "Coin"
+            label.Parent = billboard
+        end
+
+        local label = billboard:FindFirstChild("TextLabel")
+        if label and rootPos then
+            label.TextColor3 = COIN_ESP_COLOR
+            label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
+            local dist = math.floor((rootPos - coin.Position).Magnitude + 0.5)
+            local newText = string.format("COIN\n%d studs", dist)
+            if label.Text ~= newText then
+                label.Text = newText
+            end
         end
     end
+
+    coinVisuals[coin] = true
 end
 
 updateCoinESP = function(updateDistances)
@@ -3079,7 +2920,11 @@ updateCoinESP = function(updateDistances)
 
     if not enabled then
         for coin in pairs(coinVisuals) do
-            removeCoinESP(coin)
+            if coin.Parent then
+                removeCoinESP(coin)
+            else
+                coinVisuals[coin] = nil
+            end
         end
         return
     end
@@ -3108,9 +2953,6 @@ updateCoinESP = function(updateDistances)
     end
 end
 
--- ============================
--- GUN DROP ESP
--- ============================
 local GUN_ESP_COLOR = Color3.fromRGB(50, 145, 255)
 
 local function getCachedGunDropPart()
@@ -3119,11 +2961,13 @@ local function getCachedGunDropPart()
     end
     cachedGunDropPart = nil
     local map = getCurrentMap()
-    local gunObj = map and map:FindFirstChild("GunDrop", true)
-    if not gunObj then
-        gunObj = Workspace:FindFirstChild("GunDrop", true)
+    if not map then
+        return nil
     end
-    if not gunObj then return nil end
+    local gunObj = map:FindFirstChild("GunDrop", true)
+    if not gunObj then
+        return nil
+    end
     local part
     if gunObj:IsA("BasePart") then
         part = gunObj
@@ -3139,14 +2983,22 @@ local function getCachedGunDropPart()
 end
 
 removeGunESP = function(part)
-    if not part then return end
-    destroyTrackedVisual(gunDropVisuals, part)
-    if part.Parent then
-        local h = part:FindFirstChild("GunDropHighlight")
-        if h then h:Destroy() end
-        local b = part:FindFirstChild("GunDropBillboard")
-        if b then b:Destroy() end
+    if not part then
+        return
     end
+    local h = part:FindFirstChild("GunDropHighlight")
+    if h then
+        h:Destroy()
+    end
+    local b = part:FindFirstChild("GunDropBillboard")
+    if b then
+        b:Destroy()
+    end
+    local box = part:FindFirstChild("GunDropBox")
+    if box then
+        box:Destroy()
+    end
+    gunDropVisuals[part] = nil
 end
 
 updateGunESP = function()
@@ -3156,42 +3008,50 @@ updateGunESP = function()
         for part in pairs(gunDropVisuals) do
             removeGunESP(part)
         end
+        table.clear(gunDropVisuals)
         return
     end
 
-    local gunPart = getCachedGunDropPart()
     for part in pairs(gunDropVisuals) do
-        if part ~= gunPart or not part.Parent then
+        if not part.Parent then
+            gunDropVisuals[part] = nil
+        end
+    end
+
+    local gunPart = getCachedGunDropPart()
+
+    for part in pairs(gunDropVisuals) do
+        if part ~= gunPart then
             removeGunESP(part)
         end
     end
 
-    if not gunPart then return end
+    if not gunPart then
+        return
+    end
 
-    local visual = gunDropVisuals[gunPart]
-    if type(visual) ~= "table" or not visual.billboard or not visual.billboard.Parent then
-        destroyEspObjects(visual)
-        local folder = getEspFolder()
-        local adornment = Instance.new("BoxHandleAdornment")
-        adornment.Name = "GunDropBox"
-        adornment.Adornee = gunPart
-        adornment.AlwaysOnTop = true
-        adornment.ZIndex = 10
-        adornment.Size = gunPart.Size + Vector3.new(0.4, 0.4, 0.4)
-        adornment.Color3 = GUN_ESP_COLOR
-        adornment.Transparency = 0.25
-        parentAdornment(adornment, gunPart)
+    local highlight = gunPart:FindFirstChild("GunDropHighlight")
+    if not highlight then
+        highlight = Instance.new("Highlight")
+        highlight.Name = "GunDropHighlight"
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillColor = GUN_ESP_COLOR
+        highlight.FillTransparency = 0.3
+        highlight.OutlineColor = getStrokeColor(GUN_ESP_COLOR)
+        highlight.OutlineTransparency = 0
+        highlight.Parent = gunPart
+    end
 
-        local billboard = Instance.new("BillboardGui")
+    local billboard = gunPart:FindFirstChild("GunDropBillboard")
+    if not billboard then
+        billboard = Instance.new("BillboardGui")
         billboard.Name = "GunDropBillboard"
         billboard.Size = UDim2.fromOffset(140, 40)
         billboard.StudsOffset = Vector3.new(0, 2.5, 0)
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 1000
         billboard.LightInfluence = 0
-        billboard.ResetOnSpawn = false
-        billboard.Adornee = gunPart
-        billboard.Parent = folder
+        billboard.Parent = gunPart
 
         local label = Instance.new("TextLabel")
         label.Name = "TextLabel"
@@ -3204,87 +3064,77 @@ updateGunESP = function()
         label.TextStrokeColor3 = getStrokeColor(GUN_ESP_COLOR)
         label.Text = "GUN"
         label.Parent = billboard
-
-        visual = { adornment = adornment, billboard = billboard, label = label }
-        gunDropVisuals[gunPart] = visual
-    else
-        if visual.adornment then
-            visual.adornment.Adornee = gunPart
-        end
-        visual.billboard.Adornee = gunPart
     end
 
-    if visual.label then
+    local label = billboard and billboard:FindFirstChild("TextLabel")
+    if label then
+        label.TextColor3 = GUN_ESP_COLOR
+        label.TextStrokeColor3 = getStrokeColor(GUN_ESP_COLOR)
         local _, _, root = getCharacterParts()
         if root then
             local dist = math.floor((root.Position - gunPart.Position).Magnitude + 0.5)
             local newText = "GUN\n" .. dist .. " studs"
-            if visual.label.Text ~= newText then
-                visual.label.Text = newText
+            if label.Text ~= newText then
+                label.Text = newText
             end
         end
     end
-end
 
-local function hookBackpack(player, backpack)
-    if not backpack then return end
-    trackConnection(backpack.ChildAdded:Connect(function()
-        task.defer(updatePlayer, player)
-    end))
-    trackConnection(backpack.ChildRemoved:Connect(function()
-        task.defer(updatePlayer, player)
-    end))
+    gunDropVisuals[gunPart] = true
 end
 
 local function hookPlayer(player)
-    if player == LocalPlayer then return end
+    if player == LocalPlayer then
+        return
+    end
 
     local function onCharacter(character)
         task.defer(function()
-            updatePlayer(player, true)
+            updatePlayer(player)
         end)
 
         trackConnection(character.ChildAdded:Connect(function(child)
             if child:IsA("Tool") then
-                task.defer(updatePlayer, player)
+                task.defer(function()
+                    updatePlayer(player)
+                end)
             end
         end))
         trackConnection(character.ChildRemoved:Connect(function(child)
             if child:IsA("Tool") then
-                task.defer(updatePlayer, player)
+                task.defer(function()
+                    updatePlayer(player)
+                end)
             end
         end))
-
-        local humanoid = character:FindFirstChildWhichIsA("Humanoid")
-        if humanoid then
-            trackConnection(humanoid.Died:Connect(function()
-                task.defer(updatePlayer, player, true)
-            end))
-        end
     end
 
     if player.Character then
         onCharacter(player.Character)
     end
     trackConnection(player.CharacterAdded:Connect(onCharacter))
-    trackConnection(player.CharacterRemoving:Connect(function(character)
-        hidePlayerVisuals(playerEsp[player])
-        stripLegacyEsp(character)
-    end))
 
     trackConnection(player.AttributeChanged:Connect(function(attr)
         if attr == "Alive" then
-            task.defer(updatePlayer, player, true)
+            task.defer(function()
+                updatePlayer(player)
+            end)
         end
     end))
 
-    hookBackpack(player, player:FindFirstChild("Backpack"))
-    trackConnection(player.ChildAdded:Connect(function(child)
-        if child:IsA("Backpack") then
-            hookBackpack(player, child)
-            task.defer(updatePlayer, player)
-        end
-    end))
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then
+        trackConnection(backpack.ChildAdded:Connect(function()
+            task.defer(function()
+                updatePlayer(player)
+            end)
+        end))
+        trackConnection(backpack.ChildRemoved:Connect(function()
+            task.defer(function()
+                updatePlayer(player)
+            end)
+        end))
+    end
 end
 
 for _, player in ipairs(Players:GetPlayers()) do
@@ -3293,7 +3143,13 @@ end
 trackConnection(Players.PlayerAdded:Connect(hookPlayer))
 
 trackConnection(Players.PlayerRemoving:Connect(function(player)
-    removeVisuals(player)
+    local cached = playerRoleCache[player]
+    if cached and cached.character then
+        removeVisuals(cached.character)
+    elseif player.Character then
+        removeVisuals(player.Character)
+    end
+    playerRoleCache[player] = nil
     if selectedPlayerName == player.Name then
         selectedPlayerName = nil
     end
@@ -3310,15 +3166,13 @@ end))
 
 task.spawn(function()
     local espTick = 0
-    while uiRunning and not scriptUnloaded do
+    while uiRunning do
         espTick = espTick + 1
-        pcall(refreshAllPlayers, false)
-        if espTick % 2 == 0 then
-            pcall(updateCoinESP, true)
-            pcall(updateGunESP)
-        end
-        pcall(updateRoundHud)
-        task.wait(0.4)
+        refreshAllPlayers()
+        updateCoinESP(espTick % 2 == 0)
+        updateGunESP()
+        updateRoundHud()
+        task.wait(0.2)
     end
 end)
 
@@ -4295,7 +4149,7 @@ end
 
 combatTab:CreateKeybind({
     name = "Bring / Kill All",
-    description = "G: Murderer only — stack everyone 2.5 studs in front of you and knife them there",
+    description = "G: Murderer only â€” stack everyone 2.5 studs in front of you and knife them there",
     value = Enum.KeyCode.G,
     hold = false,
     flag = "BringAllKey",
@@ -4520,7 +4374,7 @@ playersTab:CreateButton({
         local lines = {}
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer then
-                table.insert(lines, player.Name .. " — " .. getRole(player))
+                table.insert(lines, player.Name .. " â€” " .. getRole(player))
             end
         end
         window:Notify({
@@ -4614,7 +4468,7 @@ lobbyTab:CreateButton({
 -- ============================
 
 -- ============================
--- FUN TAB — Los Pollos
+-- FUN TAB â€” Los Pollos
 -- ============================
 local losPollosImageId = nil
 infectionActive = false
