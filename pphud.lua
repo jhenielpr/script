@@ -114,6 +114,14 @@ end
   
   local WindowTable = {}
   WindowTable.__index = WindowTable
+  WindowTable._connections = {}
+
+  local function trackInput(connection)
+      if connection then
+          table.insert(WindowTable._connections, connection)
+      end
+      return connection
+  end
   
   self.Tabs = 0
   self.Hovering = false
@@ -126,7 +134,7 @@ end
   }, {
       Utilities:Create("Frame", {
           Name = "Main",
-          Size = UDim2.new(0, 600, 0, 400),
+          Size = UDim2.new(0, 900, 0, 560),
           BackgroundColor3 = Color3.fromRGB(255, 255, 255), -- Colors.Primary
           ClipsDescendants = true,
           Position = UDim2.new(0, 80, 0, 80)
@@ -228,11 +236,11 @@ end
       })
   })
 
-  UserInputService.InputBegan:Connect(function(Input, GameProcessed)
+  trackInput(UserInputService.InputBegan:Connect(function(Input, GameProcessed)
     if Input.KeyCode == Enum.KeyCode.Q and not GameProcessed then
         Window.Main.Visible = not Window.Main.Visible
     end
-  end)
+  end))
 
   local Console = Utilities:Create("Frame", {
     Name = "Console",
@@ -383,11 +391,11 @@ end
 
   local SizeX = Instance.new("NumberValue", Window.Main)
   SizeX.Name = "X"
-  SizeX.Value = 600
+  SizeX.Value = 900
 
   local SizeY = Instance.new("NumberValue", Window.Main)
   SizeY.Name = "Y"
-  SizeY.Value = 400
+  SizeY.Value = 560
 
   local function ResizeTabs()
     local TabSize = 1 / self.Tabs
@@ -403,8 +411,8 @@ end
 
   local function Resize()
     local MouseLocation = Utilities:GetMouse()
-    local X = math.clamp(MouseLocation.X - Window.Main.AbsolutePosition.X, 480, 900)
-    local Y = math.clamp(MouseLocation.Y - Window.Main.AbsolutePosition.Y, 280, 560)
+    local X = math.clamp(MouseLocation.X - Window.Main.AbsolutePosition.X, 500, 1100)
+    local Y = math.clamp(MouseLocation.Y - Window.Main.AbsolutePosition.Y, 320, 700)
     
     SizeX.Value = X
     SizeY.Value = Y
@@ -464,14 +472,20 @@ end
       end
   end)
 
-  UserInputService.InputChanged:Connect(function(input)
+  trackInput(UserInputService.InputChanged:Connect(function(input)
       if input == dragInput and dragging then
           local delta = input.Position - mousePos
           Window.Main.Position  = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y)
       end
-  end)
+  end))
   
   function WindowTable:Exit()
+      for _, connection in ipairs(WindowTable._connections) do
+          pcall(function()
+              connection:Disconnect()
+          end)
+      end
+      table.clear(WindowTable._connections)
       Window:Destroy()
   end
   
@@ -675,11 +689,11 @@ end
       Parent = SectionArgs.Side == "Left" and Left or Right,
       BackgroundColor3 = Color3.fromRGB(167, 54, 54),
       BackgroundTransparency = 1,
-      Size = UDim2.new(0, 286, 0, 36) -- +64
+      Size = UDim2.new(0, 436, 0, 36) -- +64
   }, {
       Utilities:Create("TextLabel", {
           Name = "SectionText",
-          Size = UDim2.new(0, 286, 0, 26),
+          Size = UDim2.new(0, 436, 0, 26),
           Text = SectionArgs.Text,
           TextXAlignment = Enum.TextXAlignment.Left,
           TextSize = 14,
@@ -692,12 +706,12 @@ end
       Utilities:Create("Frame", {
           Name = "Divider",
           Position = UDim2.new(0, 0, 0, 28),
-          Size = UDim2.new(0, 286, 0, 1),
+          Size = UDim2.new(0, 436, 0, 1),
           BackgroundColor3 = Colors.Divider
       }),
       Utilities:Create("Frame", {
         Name = "Container",
-        Size = UDim2.new(0, 286, 0, 0),
+        Size = UDim2.new(0, 436, 0, 0),
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 0, 0, 38)
       }, {
@@ -720,8 +734,8 @@ end
   SectionContainer.ChildAdded:Connect(function()
     SectionY = SectionY + 21
 
-    Section.Size = UDim2.new(0, 286, 0, SectionY)
-    SectionContainer.Size = UDim2.new(0, 286, 0, SectionY)
+    Section.Size = UDim2.new(0, 436, 0, SectionY)
+    SectionContainer.Size = UDim2.new(0, 436, 0, SectionY)
   end)
 
   function SectionTable:Check(CheckArgs)
@@ -737,7 +751,7 @@ end
   local Check = Utilities:Create("Frame", {
     Name = "Check",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 286, 0, 21),
+    Size = UDim2.new(0, 436, 0, 21),
     BackgroundTransparency = 1,
   }, {
     Utilities:Create("TextButton", {
@@ -834,7 +848,7 @@ end
   local Button = Utilities:Create("Frame", {
     Name = "Button",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 286, 0, 21),
+    Size = UDim2.new(0, 436, 0, 21),
     BackgroundTransparency = 1
   }, {
     Utilities:Create("Frame", {
@@ -936,7 +950,7 @@ end
   local Slider = Utilities:Create("Frame", {
     Name = "Slider",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 286, 0, 21),
+    Size = UDim2.new(0, 436, 0, 21),
     BackgroundTransparency = 1
   }, {
     Utilities:Create("Frame", {
@@ -1045,7 +1059,7 @@ end
     local Label = Utilities:Create("Frame", {
         Name = "Label",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 286, 0, 21),
+        Size = UDim2.new(0, 436, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("TextLabel", {
@@ -1054,7 +1068,7 @@ end
             TextColor3 = Info.Color,
             RichText = true,
             BackgroundTransparency = 1,
-            Size = UDim2.new(0, 286, 0, 14),
+            Size = UDim2.new(0, 436, 0, 14),
             TextXAlignment = Enum.TextXAlignment.Left,
             TextSize = 13,
             Font = Enum.Font.SourceSansBold
@@ -1090,7 +1104,7 @@ end
         Name = "Dropdown",
         BackgroundTransparency = 1,
         Parent = SectionContainer,
-        Size = UDim2.new(0, 286, 0, 21)
+        Size = UDim2.new(0, 436, 0, 21)
     }, {
         Utilities:Create("Frame", {
             Name = "DropdownFrame",
@@ -1357,7 +1371,7 @@ end
     local Box = Utilities:Create("Frame", {
         Name = "Input",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 286, 0, 21),
+        Size = UDim2.new(0, 436, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("Frame", {
@@ -1414,16 +1428,46 @@ end
     Info.Default = Info.Default or Enum.KeyCode.Unknown
     Info.Callback = Info.Callback or function() end
 
-    local current = Info.Default
-    if typeof(current) == "string" then
-        current = Enum.KeyCode[current] or Enum.KeyCode.Unknown
+    local function parseBind(value)
+        if typeof(value) == "EnumItem" then
+            return value
+        end
+        if type(value) == "string" then
+            if Enum.UserInputType[value] then
+                return Enum.UserInputType[value]
+            end
+            if Enum.KeyCode[value] then
+                return Enum.KeyCode[value]
+            end
+        end
+        return Enum.KeyCode.Unknown
     end
+
+    local function bindLabel(bind)
+        if typeof(bind) ~= "EnumItem" then
+            return "None"
+        end
+        return bind.Name
+    end
+
+    local function inputMatchesBind(input, bind)
+        if typeof(bind) ~= "EnumItem" then
+            return false
+        end
+        if bind.EnumType == Enum.UserInputType then
+            return input.UserInputType == bind
+        end
+        return input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == bind
+    end
+
+    local current = parseBind(Info.Default)
     local listening = false
+    local listenAt = 0
 
     local Bind = Utilities:Create("Frame", {
         Name = "Keybind",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 286, 0, 21),
+        Size = UDim2.new(0, 436, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("Frame", {
@@ -1436,7 +1480,7 @@ end
                 Name = "BindText",
                 Size = UDim2.new(1, 0, 1, 0),
                 BackgroundTransparency = 1,
-                Text = current.Name,
+                Text = bindLabel(current),
                 TextSize = 13,
                 Font = Enum.Font.SourceSansBold,
                 TextColor3 = Colors.PrimaryText
@@ -1461,31 +1505,50 @@ end
     })
 
     if Info.Flag then
-        library.Flags[Info.Flag] = current.Name
+        library.Flags[Info.Flag] = bindLabel(current)
     end
 
     Bind.BindFrame.BindButton.MouseButton1Click:Connect(function()
         listening = true
+        listenAt = os.clock()
         Bind.BindFrame.BindText.Text = "..."
     end)
 
-    UserInputService.InputBegan:Connect(function(input, processed)
+    trackInput(UserInputService.InputBegan:Connect(function(input, processed)
         if listening then
-            if input.UserInputType == Enum.UserInputType.Keyboard then
-                current = input.KeyCode
-                Bind.BindFrame.BindText.Text = current.Name
-                if Info.Flag then
-                    library.Flags[Info.Flag] = current.Name
-                end
+            if input.KeyCode == Enum.KeyCode.Escape then
                 listening = false
+                Bind.BindFrame.BindText.Text = bindLabel(current)
+                return
             end
+            local isMouse = input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.MouseButton2
+                or input.UserInputType == Enum.UserInputType.MouseButton3
+            local isKey = input.UserInputType == Enum.UserInputType.Keyboard
+                and input.KeyCode ~= Enum.KeyCode.Unknown
+            if isMouse then
+                if input.UserInputType == Enum.UserInputType.MouseButton1 and (os.clock() - listenAt) < 0.15 then
+                    return
+                end
+                current = input.UserInputType
+            elseif isKey then
+                current = input.KeyCode
+            else
+                return
+            end
+            Bind.BindFrame.BindText.Text = bindLabel(current)
+            if Info.Flag then
+                library.Flags[Info.Flag] = bindLabel(current)
+            end
+            listening = false
+            pcall(Info.Callback, current)
             return
         end
         if processed then return end
-        if input.KeyCode == current then
+        if inputMatchesBind(input, current) then
             task.spawn(Info.Callback, current)
         end
-    end)
+    end))
 
     return Bind
   end

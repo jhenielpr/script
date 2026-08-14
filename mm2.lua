@@ -385,7 +385,7 @@ local function unloadScript()
    scriptUnloaded = true
    loadingConfig = true
 
-   -- Stop all loops / feature flags (getFlag returns fallbacks after this)
+   -- Stop all loops / feature flags (getFlag returns false for booleans after this)
    uiRunning = false
    farmRunning = false
    gunFarmRunning = false
@@ -396,8 +396,17 @@ local function unloadScript()
    infectionActive = false
    currentTarget = nil
    currentMode = nil
+   aimbotEnabled = false
+   aiming = false
 
    pcall(function()
+      for key, value in pairs(flagValues) do
+         if type(value) == "boolean" then
+            flagValues[key] = false
+         end
+      end
+      flagValues.EnableAimbot = false
+      flagValues.SilentAim = false
       flagValues.AutoCoins = false
       flagValues.AutoGunDrop = false
       flagValues.FarmNoRender = false
@@ -408,6 +417,20 @@ local function unloadScript()
       flagValues.RoundHUD = false
       flagValues.AntiIdle = false
       flagValues.LosPollosInfect = false
+      flagValues.InvisibleKeybindEnabled = false
+      flagValues.AutoFling = false
+      flagValues.AdvancedFling = false
+      flagValues.AimbotFOVCircle = false
+      flagValues.AimbotPredictBox = false
+   end)
+   pcall(function()
+      if library and library.Flags then
+         for key, value in pairs(library.Flags) do
+            if type(value) == "boolean" then
+               library.Flags[key] = false
+            end
+         end
+      end
    end)
    pcall(function()
       local persist = getgenv().MM2EnhancedPersist
@@ -415,6 +438,7 @@ local function unloadScript()
          persist.AutoCoins = false
          persist.AutoGunDrop = false
          persist.FarmNoRender = false
+         persist.EnableAimbot = false
       end
    end)
 
@@ -537,7 +561,7 @@ local function unloadScript()
    end)
    pcall(destroyFovCircle)
 
-   -- Unload UI and leftover ScreenGuis
+   -- Unload UI and leftover ScreenGuis (also disconnects PPHUD keybinds / Q hide)
    pcall(function() window:Unload() end)
    pcall(sweepScriptGuis)
 
@@ -714,6 +738,9 @@ end
 
 getFlag = function(name, fallback)
     if scriptUnloaded then
+        if type(fallback) == "boolean" then
+            return false
+        end
         return fallback
     end
     local ok, value = pcall(function()
@@ -3316,7 +3343,7 @@ combatTab:CreateDropdown({
 
 combatTab:CreateKeybind({
     name = "Custom Aim Key",
-    description = "Press to set any keyboard key as the aim bind",
+    description = "Click then press a keyboard key or mouse button (LMB/RMB/MMB)",
     value = Enum.KeyCode.E,
     flag = "AimbotCustomKey",
     callback = function(key)
