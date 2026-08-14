@@ -1604,14 +1604,17 @@ local function matchesAimbotTarget(player)
         return false
     end
     if mode == "Target" then
-        local wanted = string.lower(tostring(aimbotTargetName or getFlag("AimbotTargetInput", "") or ""))
+        local wanted = tostring(aimbotTargetName or getFlag("AimbotTargetInput", "") or selectedPlayerName or "")
         if wanted == "" then
             return false
         end
-        return string.lower(player.Name) == wanted
-            or string.lower(player.DisplayName) == wanted
-            or string.sub(string.lower(player.Name), 1, #wanted) == wanted
-            or string.sub(string.lower(player.DisplayName), 1, #wanted) == wanted
+        wanted = string.lower(wanted)
+        local name = string.lower(player.Name)
+        local display = string.lower(player.DisplayName)
+        return name == wanted
+            or display == wanted
+            or string.sub(name, 1, #wanted) == wanted
+            or string.sub(display, 1, #wanted) == wanted
     end
     local role = getRole(player)
     if mode == "Murderer" or mode == "Murder" then
@@ -1626,15 +1629,59 @@ local function matchesAimbotTarget(player)
     return true
 end
 
+local function getAimKeyName()
+    local key = getFlag("AimbotKey", "MouseButton2")
+    if type(key) == "table" then
+        key = key[1]
+    end
+    if typeof(key) == "EnumItem" then
+        key = key.Name
+    end
+    return tostring(key or "MouseButton2")
+end
+
+local function inputMatchesAimKey(input)
+    local key = getAimKeyName()
+    if key == "MouseButton2" or key == "RightClick" or key == "MB2" then
+        return input.UserInputType == Enum.UserInputType.MouseButton2
+    end
+    if key == "MouseButton1" or key == "LeftClick" or key == "MB1" then
+        return input.UserInputType == Enum.UserInputType.MouseButton1
+    end
+    if key == "MouseButton3" or key == "MB3" then
+        return input.UserInputType == Enum.UserInputType.MouseButton3
+    end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        return input.KeyCode.Name == key
+    end
+    return false
+end
+
+local function isAimHoldMode()
+    local mode = getFlag("AimbotKeyMode", "Hold")
+    if type(mode) == "table" then
+        mode = mode[1]
+    end
+    return mode ~= "Toggle"
+end
+
 trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+    if not inputMatchesAimKey(input) then
+        return
+    end
+    if isAimHoldMode() then
         aiming = true
+    else
+        aiming = not aiming
     end
 end))
 
 trackConnection(UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+    if not isAimHoldMode() then
+        return
+    end
+    if inputMatchesAimKey(input) then
         aiming = false
     end
 end))
@@ -3206,13 +3253,53 @@ combatTab:CreateSection({ name = "Aimbot" })
 
 combatTab:CreateToggle({
     name = "Enable Aimbot",
-    description = "Hold Right Click to lock on",
+    description = "Uses the aim key below (hold or toggle)",
     value = true,
     flag = "EnableAimbot",
     callback = function(enabled)
         aimbotEnabled = enabled
         if not enabled then
+            aiming = false
             destroyFovCircle()
+        end
+    end,
+})
+
+combatTab:CreateDropdown({
+    name = "Aim Key Mode",
+    options = { "Hold", "Toggle" },
+    value = "Hold",
+    flag = "AimbotKeyMode",
+    callback = function()
+        aiming = false
+    end,
+})
+
+combatTab:CreateDropdown({
+    name = "Aim Key",
+    options = { "MouseButton2", "MouseButton1", "MouseButton3", "E", "F", "T", "V", "C", "X", "Z", "Q", "LeftControl", "LeftShift", "CapsLock" },
+    value = "MouseButton2",
+    flag = "AimbotKey",
+    callback = function()
+        aiming = false
+    end,
+})
+
+combatTab:CreateKeybind({
+    name = "Custom Aim Key",
+    description = "Press to set any keyboard key as the aim bind",
+    value = Enum.KeyCode.E,
+    flag = "AimbotCustomKey",
+    callback = function(key)
+        local name = key
+        if typeof(key) == "EnumItem" then
+            name = key.Name
+        end
+        if type(name) == "string" and name ~= "" and name ~= "Unknown" then
+            flagValues.AimbotKey = name
+            if library and library.Flags then
+                library.Flags.AimbotKey = name
+            end
         end
     end,
 })
@@ -3220,7 +3307,7 @@ combatTab:CreateToggle({
 combatTab:CreateDropdown({
     name = "Aimbot Target",
     options = { "Target", "Sheriff", "Murderer", "Innocent" },
-    value = "Sheriff",
+    value = "Target",
     multiSelect = false,
     placeholder = "Who to lock onto",
     flag = "AimbotTargetMode",
