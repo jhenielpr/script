@@ -1,40 +1,162 @@
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local VirtualUser = game:GetService("VirtualUser")
+local function missing(t, f, fallback)
+    if type(f) == t then
+        return f
+    end
+    return fallback
+end
+
+cloneref = missing("function", cloneref, function(...) return ... end)
+sethidden = missing("function", sethiddenproperty or set_hidden_property or set_hidden_prop)
+gethidden = missing("function", gethiddenproperty or get_hidden_property or get_hidden_prop)
+queueteleport = missing("function", queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport))
+httprequest = missing("function", request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))
+everyClipboard = missing("function", setclipboard or toclipboard or set_clipboard or (Clipboard and Clipboard.set))
+setclipboard = everyClipboard
+firetouchinterest = missing("function", firetouchinterest)
+local waxwritefile, waxreadfile = writefile, readfile
+writefile = missing("function", waxwritefile) and function(file, data, safe)
+    if safe == true then
+        return pcall(waxwritefile, file, data)
+    end
+    waxwritefile(file, data)
+end
+readfile = missing("function", waxreadfile) and function(file, safe)
+    if safe == true then
+        return pcall(waxreadfile, file)
+    end
+    return waxreadfile(file)
+end
+isfile = missing("function", isfile, readfile and function(file)
+    local success, result = pcall(function()
+        return readfile(file)
+    end)
+    return success and result ~= nil and result ~= ""
+end)
+makefolder = missing("function", makefolder)
+isfolder = missing("function", isfolder)
+listfiles = missing("function", listfiles)
+getcustomasset = missing("function", getcustomasset or getsynasset)
+getconnections = missing("function", getconnections or get_signal_cons)
+
+local requiredExecutor = {
+    { name = "writefile", fn = writefile, why = "Fluent config auto-save" },
+    { name = "readfile", fn = readfile, why = "Fluent config load" },
+    { name = "isfile", fn = isfile, why = "Fluent config load" },
+    { name = "makefolder", fn = makefolder, why = "Fluent config folder" },
+}
+
+local optionalExecutor = {
+    { name = "firetouchinterest", fn = firetouchinterest, why = "Murderer kill-all knife hits" },
+    { name = "getconnections", fn = getconnections, why = "Anti Idle (Idled hook)" },
+    { name = "getcustomasset", fn = getcustomasset, why = "Los Pollos image" },
+    { name = "queue_on_teleport", fn = queueteleport, why = "Keep farm flags after kick/rejoin" },
+    { name = "setclipboard", fn = everyClipboard, why = "Copy JobId / PlaceId" },
+    { name = "listfiles", fn = listfiles, why = "Fluent named config list" },
+    { name = "isfolder", fn = isfolder, why = "Fluent folder checks" },
+}
+
+local missingRequired, missingOptional = {}, {}
+for _, item in ipairs(requiredExecutor) do
+    if type(item.fn) ~= "function" then
+        table.insert(missingRequired, item.name .. " (" .. item.why .. ")")
+    end
+end
+for _, item in ipairs(optionalExecutor) do
+    if type(item.fn) ~= "function" then
+        table.insert(missingOptional, item.name .. " (" .. item.why .. ")")
+    end
+end
+
+if #missingRequired > 0 then
+    warn("[MM2 Enhanced] Missing required executor functions:\n- " .. table.concat(missingRequired, "\n- "))
+end
+if #missingOptional > 0 then
+    warn("[MM2 Enhanced] Missing optional executor functions:\n- " .. table.concat(missingOptional, "\n- "))
+end
+
+local Players = cloneref(game:GetService("Players"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local TweenService = cloneref(game:GetService("TweenService"))
+local RunService = cloneref(game:GetService("RunService"))
+local VirtualUser = cloneref(game:GetService("VirtualUser"))
+local TeleportService = cloneref(game:GetService("TeleportService"))
+local GuiService = cloneref(game:GetService("GuiService"))
 local LocalPlayer = Players.LocalPlayer
-local Workspace = game:GetService("Workspace")
+local Workspace = cloneref(game:GetService("Workspace"))
+
+getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
 
 -- ============================
--- WINDUI LOAD
+-- FLUENT LOAD
 -- ============================
-local WindUI = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
+local Fluent = loadstring(game:HttpGet(
+    "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
+))()
+local SaveManager = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"
+))()
+local InterfaceManager = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"
 ))()
 
 -- ============================
 -- WINDOW
 -- ============================
-local window = WindUI:CreateWindow({
+local window = Fluent:CreateWindow({
     Title = "MM2 Enhanced",
     SubTitle = "MM2 utility suite",
-    Icon = "shield",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Acrylic = false,
     Theme = "Dark",
-    Folder = "MM2Enhanced",
+    MinimizeKey = Enum.KeyCode.Q,
 })
 
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+SaveManager:IgnoreThemeSettings()
+InterfaceManager:SetFolder("MM2Enhanced")
+SaveManager:SetFolder("MM2Enhanced")
+
 -- Compatibility layer keeps the existing feature callbacks intact while
--- translating the old menu calls to WindUI components.
+-- translating the old menu calls to Fluent components.
 local flagValues = {}
+local loadingConfig = false
+local saveQueued = false
+local DEFAULT_CONFIG_NAME = "MM2Enhanced"
+
+local function queueAutoSave()
+    if scriptUnloaded or loadingConfig or saveQueued then
+        return
+    end
+    saveQueued = true
+    task.delay(0.4, function()
+        saveQueued = false
+        if loadingConfig then
+            return
+        end
+        pcall(function()
+            SaveManager:Save(DEFAULT_CONFIG_NAME)
+        end)
+        pcall(function()
+            if writefile then
+                writefile(SaveManager.Folder .. "/settings/autoload.txt", DEFAULT_CONFIG_NAME)
+            end
+        end)
+    end)
+end
 
 function window:Get(name)
+    local option = Fluent.Options and Fluent.Options[name]
+    if option and option.Value ~= nil then
+        return option.Value
+    end
     return flagValues[name]
 end
 
 function window:Notify(data)
-    return WindUI:Notify({
+    return Fluent:Notify({
         Title = data.title or data.Title or "MM2 Enhanced",
         Content = data.content or data.Content or data.subtitle or "",
         Duration = data.duration or data.Duration or 3,
@@ -45,154 +167,225 @@ window.Toast = window.Notify
 
 function window:ChangeTheme(theme)
     pcall(function()
-        WindUI:SetTheme(theme)
+        if self.SetTheme then
+            self:SetTheme(theme)
+        elseif Fluent.SetTheme then
+            Fluent:SetTheme(theme)
+        end
     end)
 end
 
 function window:ToggleHide()
-    pcall(function() self:Toggle() end)
+    pcall(function()
+        if self.Minimize then
+            self:Minimize()
+        elseif Fluent.Toggle then
+            Fluent:Toggle()
+        end
+    end)
 end
 
 function window:Save()
     local ok, result = pcall(function()
-        self.CurrentConfig = self.ConfigManager:Config("MM2Enhanced")
-        return self.CurrentConfig:Save()
+        return SaveManager:Save(DEFAULT_CONFIG_NAME)
     end)
     return ok and result ~= false
 end
 
 function window:Load()
+    loadingConfig = true
     local ok, result = pcall(function()
-        self.CurrentConfig = self.ConfigManager:CreateConfig("MM2Enhanced")
-        return self.CurrentConfig:Load()
+        return SaveManager:Load(DEFAULT_CONFIG_NAME)
+    end)
+    task.delay(0.2, function()
+        loadingConfig = false
     end)
     return ok and result ~= false
 end
 
 function window:Unload()
-    pcall(function() WindUI:Destroy() end)
-    pcall(function() self:Destroy() end)
+    pcall(function()
+        Fluent.Unloaded = true
+    end)
+    pcall(function()
+        if type(Fluent.Destroy) == "function" then
+            Fluent:Destroy()
+        end
+    end)
+    pcall(function()
+        if self.Destroy then
+            self:Destroy()
+        end
+    end)
+    pcall(function()
+        if self.Root and self.Root.Destroy then
+            self.Root:Destroy()
+        end
+    end)
+    pcall(function()
+        if Fluent.GUI then
+            Fluent.GUI:Destroy()
+        end
+    end)
+    pcall(function()
+        if Fluent.ScreenGui then
+            Fluent.ScreenGui:Destroy()
+        end
+    end)
 end
 
 local function normalizeValue(value, fallback)
     if type(value) == "table" then
-        return value[1] or fallback
+        if value[1] then
+            return value[1]
+        end
+        for key, enabled in pairs(value) do
+            if enabled == true and type(key) == "string" then
+                return key
+            end
+        end
+        return fallback
     end
     return value == nil and fallback or value
 end
 
+local function sliderRounding(increment)
+    increment = tonumber(increment) or 1
+    if increment >= 1 then
+        return 0
+    end
+    local decimals = tostring(increment):match("%.(%d+)")
+    return decimals and #decimals or 1
+end
+
+local function bindFlag(flag, value)
+    if flag then
+        flagValues[flag] = value
+    end
+end
+
 function window:CreateTab(config)
-    local tab = self:Tab({
+    local tab = self:AddTab({
         Title = config.name or config.Name,
-        Icon = config.icon or config.Icon,
+        Icon = config.icon or config.Icon or "",
     })
 
     function tab:CreateSection(section)
-        return self:Section({ Title = section.name or section.Name })
+        return self:AddSection(section.name or section.Name)
     end
 
     function tab:CreateToggle(element)
-        flagValues[element.flag] = element.value
-        return self:Toggle({
+        local flag = element.flag or element.name
+        bindFlag(flag, element.value)
+        return self:AddToggle(flag, {
             Title = element.name,
-            Desc = element.description,
-            Value = element.value,
-            Flag = element.flag,
+            Description = element.description,
+            Default = element.value == true,
             Callback = function(value)
-                flagValues[element.flag] = value
+                bindFlag(flag, value)
                 if element.callback then element.callback(value) end
+                queueAutoSave()
             end,
         })
     end
 
     function tab:CreateSlider(element)
-        flagValues[element.flag] = element.value
-        return self:Slider({
+        local flag = element.flag or element.name
+        bindFlag(flag, element.value)
+        return self:AddSlider(flag, {
             Title = element.name,
-            Desc = element.description,
-            Value = {
-                Min = element.range[1],
-                Max = element.range[2],
-                Default = element.value,
-            },
-            Step = element.increment,
-            Flag = element.flag,
+            Description = element.description,
+            Default = element.value,
+            Min = element.range[1],
+            Max = element.range[2],
+            Rounding = sliderRounding(element.increment),
             Callback = function(value)
-                flagValues[element.flag] = value
+                bindFlag(flag, value)
                 if element.callback then element.callback(value) end
+                queueAutoSave()
             end,
         })
     end
 
     function tab:CreateDropdown(element)
-        flagValues[element.flag] = normalizeValue(element.value, element.options[1])
-        return self:Dropdown({
+        local flag = element.flag or element.name
+        local current = normalizeValue(element.value, element.options[1])
+        bindFlag(flag, current)
+        return self:AddDropdown(flag, {
             Title = element.name,
-            Desc = element.description,
+            Description = element.description,
             Values = element.options,
-            Value = flagValues[element.flag],
             Multi = element.multiSelect == true,
-            Flag = element.flag,
+            Default = current,
             Callback = function(value)
-                flagValues[element.flag] = normalizeValue(value, element.options[1])
+                local normalized = normalizeValue(value, element.options[1])
+                bindFlag(flag, normalized)
                 if element.callback then element.callback(value) end
+                queueAutoSave()
             end,
         })
     end
 
     function tab:CreateInput(element)
-        flagValues[element.flag] = element.value or ""
-        return self:Input({
+        local flag = element.flag or element.name
+        bindFlag(flag, element.value or "")
+        return self:AddInput(flag, {
             Title = element.name,
-            Desc = element.description,
-            Value = element.value or "",
+            Description = element.description,
+            Default = element.value or "",
             Placeholder = element.placeholder,
-            Flag = element.flag,
             Callback = function(value)
-                flagValues[element.flag] = value
+                bindFlag(flag, value)
                 if element.callback then element.callback(value) end
+                queueAutoSave()
             end,
         })
     end
 
     function tab:CreateKeybind(element)
-        flagValues[element.flag] = element.value
+        local flag = element.flag or element.name
+        bindFlag(flag, element.value)
         local keyValue = element.value
         if typeof(keyValue) == "EnumItem" then
             keyValue = keyValue.Name
         end
-        return self:Keybind({
+        return self:AddKeybind(flag, {
             Title = element.name,
-            Desc = element.description,
-            Value = keyValue,
-            Flag = element.flag,
-            Callback = function(value)
-                flagValues[element.flag] = value
-                if element.callback then element.callback(value) end
+            Description = element.description,
+            Mode = element.hold and "Hold" or "Toggle",
+            Default = keyValue,
+            Callback = function()
+                if element.callback then element.callback() end
+            end,
+            ChangedCallback = function(newKey)
+                bindFlag(flag, newKey)
+                queueAutoSave()
             end,
         })
     end
 
     function tab:CreateButton(element)
-        return self:Button({
+        return self:AddButton({
             Title = element.name,
-            Desc = element.description,
+            Description = element.description,
             Callback = element.callback,
         })
     end
 
     function tab:CreateStat(element)
-        local paragraph = self:Paragraph({
+        local paragraph = self:AddParagraph({
             Title = element.name,
             Content = tostring(element.value or "") .. (element.suffix or ""),
         })
         return {
             Set = function(_, value)
-                if paragraph and paragraph.Set then
-                    paragraph:Set({
-                        Title = element.name,
-                        Content = tostring(value) .. (element.suffix or ""),
-                    })
+                local text = tostring(value) .. (element.suffix or "")
+                if paragraph then
+                    if paragraph.SetDesc then
+                        paragraph:SetDesc(text)
+                    elseif paragraph.SetValue then
+                        paragraph:SetValue(text)
+                    end
                 end
             end,
         }
@@ -280,7 +473,7 @@ local scriptUnloaded = false
 -- Forward declarations used by unloadScript.
 local disableInvisible, disableNoclip, disableAntifling
 local clearCoinContainerHooks, invalidateMapCache
-local removeVisuals, removeCoinESP, removeGunESP
+local removeVisuals, removeCoinESP, removeGunESP, destroyEspFolder
 local cachedCoins, cachedVotePads, coinVisuals, gunDropVisuals
 local infectionActive, infectionConn
 local destroyRoundHud
@@ -293,11 +486,55 @@ local function trackConnection(connection)
     return connection
 end
 
+local function destroyTrackedGui(parent, name)
+    if not parent then return end
+    local inst = parent:FindFirstChild(name)
+    if inst then
+        pcall(function() inst:Destroy() end)
+    end
+end
+
+local function sweepScriptGuis()
+    local parents = {}
+    pcall(function()
+        table.insert(parents, cloneref(game:GetService("CoreGui")))
+    end)
+    pcall(function()
+        table.insert(parents, LocalPlayer:FindFirstChildOfClass("PlayerGui"))
+    end)
+    local names = {
+        "MM2RoundHUD",
+        "MM2EnhancedESP",
+        "Fluent",
+        "MM2 Enhanced",
+        "MM2Enhanced",
+    }
+    for _, parent in ipairs(parents) do
+        for _, name in ipairs(names) do
+            destroyTrackedGui(parent, name)
+        end
+        pcall(function()
+            for _, child in ipairs(parent:GetChildren()) do
+                local n = child.Name
+                if child:IsA("ScreenGui") or child:IsA("Folder") then
+                    if string.find(n, "Fluent", 1, true)
+                        or string.find(n, "MM2 Enhanced", 1, true)
+                        or string.find(n, "MM2Enhanced", 1, true)
+                    then
+                        child:Destroy()
+                    end
+                end
+            end
+        end)
+    end
+end
+
 local function unloadScript()
    if scriptUnloaded then return end
    scriptUnloaded = true
+   loadingConfig = true
 
-   -- Stop all loops
+   -- Stop all loops / feature flags (getFlag returns fallbacks after this)
    uiRunning = false
    farmRunning = false
    gunFarmRunning = false
@@ -305,6 +542,30 @@ local function unloadScript()
    Settings.AutoVote = false
    flinging = false
    bringLoop = false
+   infectionActive = false
+   currentTarget = nil
+   currentMode = nil
+
+   pcall(function()
+      flagValues.AutoCoins = false
+      flagValues.AutoGunDrop = false
+      flagValues.FarmNoRender = false
+      flagValues.EnableHitboxes = false
+      flagValues.EnableESP = false
+      flagValues.CoinESP = false
+      flagValues.GunESP = false
+      flagValues.RoundHUD = false
+      flagValues.AntiIdle = false
+      flagValues.LosPollosInfect = false
+   end)
+   pcall(function()
+      local persist = getgenv().MM2EnhancedPersist
+      if persist then
+         persist.AutoCoins = false
+         persist.AutoGunDrop = false
+         persist.FarmNoRender = false
+      end
+   end)
 
    -- Disable features (pcall in case not yet defined)
    pcall(disableInvisible)
@@ -318,54 +579,86 @@ local function unloadScript()
       if destroyRoundHud then destroyRoundHud() end
    end)
 
-   -- Stop infection
-   infectionActive = false
-   if infectionConn then infectionConn:Disconnect() infectionConn = nil end
-
-   -- Clean up server body viewer
-
+   if infectionConn then
+      pcall(function() infectionConn:Disconnect() end)
+      infectionConn = nil
+   end
+   if noclipConnection then
+      pcall(function() noclipConnection:Disconnect() end)
+      noclipConnection = nil
+   end
+   if antiflingConnection then
+      pcall(function() antiflingConnection:Disconnect() end)
+      antiflingConnection = nil
+   end
+   if antiIdleConnection then
+      pcall(function() antiIdleConnection:Disconnect() end)
+      antiIdleConnection = nil
+   end
+   if invisibleCollisionConnection then
+      pcall(function() invisibleCollisionConnection:Disconnect() end)
+      invisibleCollisionConnection = nil
+   end
 
    -- Disconnect all tracked connections
    for _, conn in ipairs(allConnections) do
-      if conn and conn.Disconnect then
-         pcall(function() conn:Disconnect() end)
+      if conn then
+         pcall(function()
+            conn:Disconnect()
+         end)
       end
    end
    table.clear(allConnections)
 
    -- Clean up all ESP visuals
-   for _, player in ipairs(Players:GetPlayers()) do
-      if player.Character then
-         pcall(removeVisuals, player.Character)
+   pcall(function()
+      for _, player in ipairs(Players:GetPlayers()) do
+         pcall(removeVisuals, player)
       end
-   end
-   table.clear(playerRoleCache)
+   end)
+   pcall(function() table.clear(playerRoleCache) end)
+   pcall(function()
+      if playerEsp then table.clear(playerEsp) end
+   end)
 
-   -- Clean up coin ESP
-   for coin in pairs(coinVisuals) do
-      pcall(removeCoinESP, coin)
-   end
-   table.clear(coinVisuals)
-   table.clear(cachedCoins)
+   pcall(function()
+      for coin in pairs(coinVisuals) do
+         pcall(removeCoinESP, coin)
+      end
+      table.clear(coinVisuals)
+      table.clear(cachedCoins)
+   end)
 
-   -- Clean up gun ESP
-   for part in pairs(gunDropVisuals) do
-      pcall(removeGunESP, part)
-   end
-   table.clear(gunDropVisuals)
+   pcall(function()
+      for part in pairs(gunDropVisuals) do
+         pcall(removeGunESP, part)
+      end
+      table.clear(gunDropVisuals)
+   end)
+   pcall(function()
+      if destroyEspFolder then destroyEspFolder() end
+   end)
 
-      -- Reset character properties
-   local char2, hum, root = getCharacterParts()
+   -- Reset local character
+   local character = LocalPlayer.Character
+   local hum = character and character:FindFirstChildWhichIsA("Humanoid")
+   local root = character and character:FindFirstChild("HumanoidRootPart")
    if hum then
       pcall(function()
          hum.WalkSpeed = 16
          hum.JumpPower = 50
+         hum.PlatformStand = false
+         hum.AutoRotate = true
+         if invisibleOldHipHeight ~= nil then
+            hum.HipHeight = invisibleOldHipHeight
+         end
       end)
    end
    if root then
       pcall(function()
          root.AssemblyLinearVelocity = Vector3.zero
          root.AssemblyAngularVelocity = Vector3.zero
+         root.CanCollide = true
       end)
    end
 
@@ -383,18 +676,20 @@ local function unloadScript()
       end
    end
 
-   currentTarget = nil
-   currentMode = nil
-
    -- Clear caches
    pcall(invalidateMapCache)
    pcall(function() table.clear(cachedVotePads) end)
    pcall(function() table.clear(farmCooldowns) end)
 
-   print("[MM2 Enhanced] Fully unloaded")
+   pcall(function()
+      RunService:Set3dRenderingEnabled(true)
+   end)
 
-   -- Unload UI last
+   -- Unload UI and leftover ScreenGuis
    pcall(function() window:Unload() end)
+   pcall(sweepScriptGuis)
+
+   print("[MM2 Enhanced] Fully unloaded")
 end
 
 -- Invisible mode state
@@ -493,6 +788,9 @@ local function findPlayerByText(text)
 end
 
 local function getFlag(name, fallback)
+    if scriptUnloaded then
+        return fallback
+    end
     local ok, value = pcall(function()
         return window:Get(name)
     end)
@@ -503,6 +801,19 @@ local function getFlag(name, fallback)
         return value
     end
     return fallback
+end
+
+local function set3dRenderingEnabled(enabled)
+    pcall(function()
+        RunService:Set3dRenderingEnabled(enabled)
+    end)
+end
+
+-- Disable 3D rendering while farming when the Farm tab toggle is on (lowers CPU).
+local function applyFarmRendering()
+    local farmActive = getFlag("AutoCoins", false) or getFlag("AutoGunDrop", false)
+    local noRender = getFlag("FarmNoRender", false)
+    set3dRenderingEnabled(not (farmActive and noRender))
 end
 
 -- WindUI sliders sometimes pass a table or string — always normalize to number
@@ -1669,6 +1980,7 @@ end
 local function coinFarmLoop()
     if farmRunning then return end
     farmRunning = true
+    applyFarmRendering()
     task.spawn(function()
         while getFlag("AutoCoins", false) do
             local allowed = canUseFarmAutomation()
@@ -1708,6 +2020,7 @@ local function coinFarmLoop()
         farmRunning = false
         currentMode = nil
         currentTarget = nil
+        applyFarmRendering()
     end)
 end
 
@@ -1836,6 +2149,7 @@ end
 local function gunFarmLoop()
     if gunFarmRunning then return end
     gunFarmRunning = true
+    applyFarmRendering()
     task.spawn(function()
         while getFlag("AutoGunDrop", false) do
             local allowed = canUseFarmAutomation()
@@ -1845,17 +2159,47 @@ local function gunFarmLoop()
             task.wait(0.2)
         end
         gunFarmRunning = false
+        applyFarmRendering()
     end)
 end
 
 -- ============================
--- ESP SYSTEM (event-driven + throttled)
+-- ESP SYSTEM (folder + Adornee, flag-aware cache)
 -- ============================
--- [Player] = { role = string, character = character }
 local playerRoleCache = {}
-coinVisuals = {} -- [coin] = true
+local playerEsp = {}
+coinVisuals = {}
+gunDropVisuals = {}
 
-removeVisuals = function(character)
+local espFolder
+local function getEspFolder()
+    if espFolder and espFolder.Parent then
+        return espFolder
+    end
+    local parent
+    pcall(function()
+        parent = cloneref(game:GetService("CoreGui"))
+    end)
+    if not parent then
+        parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or PlayerGui
+    end
+    espFolder = Instance.new("Folder")
+    espFolder.Name = "MM2EnhancedESP"
+    espFolder.Parent = parent
+    return espFolder
+end
+
+destroyEspFolder = function()
+    if espFolder then
+        pcall(function() espFolder:Destroy() end)
+        espFolder = nil
+    end
+    table.clear(playerEsp)
+    table.clear(coinVisuals)
+    table.clear(gunDropVisuals)
+end
+
+local function stripLegacyEsp(character)
     if not character then return end
     local head = character:FindFirstChild("Head")
     if head then
@@ -1864,162 +2208,219 @@ removeVisuals = function(character)
     end
     local highlight = character:FindFirstChild("RoleHighlight")
     if highlight then highlight:Destroy() end
+    local coinH = character:FindFirstChild("CoinHighlight")
+    if coinH then coinH:Destroy() end
 end
 
-local function updatePlayer(player)
-    if player == LocalPlayer then return end
-    local character = player.Character
-    if not character then return end
+local function destroyEspObjects(visual)
+    if not visual then return end
+    if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
+    if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+end
 
-    -- Show a separate spectator marker for players who are out of the round.
-    if player:GetAttribute("Alive") ~= true then
-        if not getFlag("EnableESP", true) or not getFlag("SpectatorESP", true) then
-            removeVisuals(character)
-            playerRoleCache[player] = nil
+local function getEspAdornee(character)
+    if not character then return nil end
+    return character:FindFirstChild("Head")
+        or character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChildWhichIsA("BasePart")
+end
+
+local function ensurePlayerVisuals(player)
+    local visual = playerEsp[player]
+    if visual and visual.highlight and visual.highlight.Parent and visual.billboard and visual.billboard.Parent then
+        return visual
+    end
+    destroyEspObjects(visual)
+
+    local folder = getEspFolder()
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "RoleHighlight_" .. player.UserId
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.FillTransparency = 0.55
+    highlight.OutlineTransparency = 0
+    highlight.Enabled = false
+    highlight.Parent = folder
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "RoleName_" .. player.UserId
+    billboard.Size = UDim2.fromOffset(220, 44)
+    billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = 1000
+    billboard.LightInfluence = 0
+    billboard.ResetOnSpawn = false
+    billboard.Enabled = false
+    billboard.Parent = folder
+
+    local label = Instance.new("TextLabel")
+    label.Name = "TextLabel"
+    label.Size = UDim2.fromScale(1, 1)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 14
+    label.TextWrapped = true
+    label.TextStrokeTransparency = 0
+    label.Parent = billboard
+
+    visual = {
+        highlight = highlight,
+        billboard = billboard,
+        label = label,
+    }
+    playerEsp[player] = visual
+    return visual
+end
+
+removeVisuals = function(playerOrCharacter)
+    local player = playerOrCharacter
+    if typeof(playerOrCharacter) == "Instance" and playerOrCharacter:IsA("Model") then
+        for tracked, data in pairs(playerRoleCache) do
+            if data.character == playerOrCharacter then
+                player = tracked
+                break
+            end
+        end
+        stripLegacyEsp(playerOrCharacter)
+        if typeof(player) ~= "Instance" or not player:IsA("Player") then
             return
         end
-
-        local head = character:FindFirstChild("Head")
-        if head then
-            local billboard = head:FindFirstChild("RoleName")
-            if not billboard then
-                billboard = Instance.new("BillboardGui")
-                billboard.Name = "RoleName"
-                billboard.Size = UDim2.fromOffset(220, 44)
-                billboard.StudsOffset = Vector3.new(0, 2.8, 0)
-                billboard.AlwaysOnTop = true
-                billboard.MaxDistance = 1000
-                billboard.LightInfluence = 0
-                billboard.Parent = head
-
-                local label = Instance.new("TextLabel")
-                label.Name = "TextLabel"
-                label.Size = UDim2.fromScale(1, 1)
-                label.BackgroundTransparency = 1
-                label.Font = Enum.Font.GothamBold
-                label.TextSize = 14
-                label.TextStrokeTransparency = 0
-                label.TextStrokeColor3 = getStrokeColor(SPECTATOR_COLOR)
-                label.Parent = billboard
-            end
-            local label = billboard:FindFirstChild("TextLabel")
-            if label then
-                label.Text = player.DisplayName .. "\n[Spectator]"
-                label.TextColor3 = SPECTATOR_COLOR
-                label.TextStrokeColor3 = getStrokeColor(SPECTATOR_COLOR)
-            end
-        end
-
-        local highlight = character:FindFirstChild("RoleHighlight")
-        if not highlight then
-            highlight = Instance.new("Highlight")
-            highlight.Name = "RoleHighlight"
-            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            highlight.FillTransparency = 0.7
-            highlight.OutlineTransparency = 0
-            highlight.Parent = character
-        end
-        highlight.FillColor = SPECTATOR_COLOR
-        highlight.OutlineColor = getStrokeColor(SPECTATOR_COLOR)
-        playerRoleCache[player] = { role = "Spectator", character = character }
-        return
     end
 
-    if not getFlag("EnableESP", true) then
-        removeVisuals(character)
+    if typeof(player) == "Instance" and player:IsA("Player") then
+        destroyEspObjects(playerEsp[player])
+        playerEsp[player] = nil
+        if player.Character then
+            stripLegacyEsp(player.Character)
+        end
         playerRoleCache[player] = nil
         return
     end
 
-    local role = getRole(player)
-    local roleColor = ROLE_COLORS[role]
-
-    -- Only skip if role AND character are both unchanged
-    local cached = playerRoleCache[player]
-    if cached and cached.role == role and cached.character == character then
-        return
-    end
-    playerRoleCache[player] = { role = role, character = character }
-
-    if getFlag("Nametags", true) and (role ~= "Innocent" or getFlag("ShowInnocentNames", true)) then
-        local head = character:FindFirstChild("Head")
-        if head then
-            local billboard = head:FindFirstChild("RoleName")
-            if not billboard then
-                billboard = Instance.new("BillboardGui")
-                billboard.Name = "RoleName"
-                billboard.Size = UDim2.fromOffset(220, 44)
-                billboard.StudsOffset = Vector3.new(0, 2.8, 0)
-                billboard.AlwaysOnTop = true
-                billboard.MaxDistance = 1000
-                billboard.LightInfluence = 0
-                billboard.Parent = head
-
-                local label = Instance.new("TextLabel")
-                label.Name = "TextLabel"
-                label.Size = UDim2.fromScale(1, 1)
-                label.BackgroundTransparency = 1
-                label.Font = Enum.Font.GothamBold
-                label.TextSize = 14
-                label.TextWrapped = true
-                label.TextStrokeTransparency = 0
-                label.TextStrokeColor3 = getStrokeColor(roleColor)
-                label.TextColor3 = roleColor
-                label.Parent = billboard
-            end
-            local label = billboard:FindFirstChild("TextLabel")
-            if label then
-                local desired = player.DisplayName .. "\n[" .. role .. "]"
-                if label.Text ~= desired then
-                    label.Text = desired
-                end
-                if label.TextColor3 ~= roleColor then
-                    label.TextColor3 = roleColor
-                end
-                label.TextStrokeColor3 = getStrokeColor(roleColor)
-            end
-        end
-    else
-        local head = character:FindFirstChild("Head")
-        if head then
-            local billboard = head:FindFirstChild("RoleName")
-            if billboard then billboard:Destroy() end
-        end
-    end
-
-    if getFlag("Highlights", true) and role ~= "Innocent" then
-        local highlight = character:FindFirstChild("RoleHighlight")
-        if not highlight then
-            highlight = Instance.new("Highlight")
-            highlight.Name = "RoleHighlight"
-            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            highlight.FillTransparency = 0.5
-            highlight.OutlineTransparency = 0
-            highlight.Parent = character
-        end
-        if highlight.FillColor ~= roleColor then
-            highlight.FillColor = roleColor
-        end
-        highlight.OutlineColor = getStrokeColor(roleColor)
-    else
-        local highlight = character:FindFirstChild("RoleHighlight")
-        if highlight then highlight:Destroy() end
+    if typeof(playerOrCharacter) == "Instance" then
+        stripLegacyEsp(playerOrCharacter)
     end
 end
 
-local function refreshAllPlayers()
-    for _, player in ipairs(Players:GetPlayers()) do
-        updatePlayer(player)
+local function hidePlayerVisuals(visual)
+    if not visual then return end
+    if visual.highlight then visual.highlight.Enabled = false end
+    if visual.billboard then visual.billboard.Enabled = false end
+end
+
+local function updatePlayer(player, force)
+    if player == LocalPlayer then return end
+
+    local character = player.Character
+    if not character or not character.Parent then
+        hidePlayerVisuals(playerEsp[player])
+        return
     end
+
+    local enabled = getFlag("EnableESP", true)
+    local nametagsOn = getFlag("Nametags", true)
+    local highlightsOn = getFlag("Highlights", true)
+    local showInnocent = getFlag("ShowInnocentNames", true)
+    local spectatorOn = getFlag("SpectatorESP", true)
+    local alive = player:GetAttribute("Alive") == true
+    local role = alive and getRole(player) or "Spectator"
+    local displayName = player.DisplayName
+
+    local cached = playerRoleCache[player]
+    if not force and cached
+        and cached.role == role
+        and cached.character == character
+        and cached.alive == alive
+        and cached.enabled == enabled
+        and cached.nametags == nametagsOn
+        and cached.highlights == highlightsOn
+        and cached.showInnocent == showInnocent
+        and cached.spectator == spectatorOn
+        and cached.displayName == displayName
+        and playerEsp[player]
+        and playerEsp[player].highlight
+        and playerEsp[player].highlight.Parent
+    then
+        local visual = playerEsp[player]
+        local adornee = getEspAdornee(character)
+        if visual.billboard and visual.billboard.Adornee ~= adornee then
+            visual.billboard.Adornee = adornee
+        end
+        if visual.highlight and visual.highlight.Adornee ~= character then
+            visual.highlight.Adornee = character
+        end
+        return
+    end
+
+    playerRoleCache[player] = {
+        role = role,
+        character = character,
+        alive = alive,
+        enabled = enabled,
+        nametags = nametagsOn,
+        highlights = highlightsOn,
+        showInnocent = showInnocent,
+        spectator = spectatorOn,
+        displayName = displayName,
+    }
+
+    stripLegacyEsp(character)
+
+    if not enabled or (not alive and not spectatorOn) then
+        hidePlayerVisuals(playerEsp[player])
+        return
+    end
+
+    local roleColor = ROLE_COLORS[role] or SPECTATOR_COLOR
+    local showTag = nametagsOn and (role ~= "Innocent" or showInnocent or not alive)
+    local showHighlight = highlightsOn and (role ~= "Innocent" or not alive)
+    local visual = ensurePlayerVisuals(player)
+    local adornee = getEspAdornee(character)
+
+    if visual.highlight then
+        visual.highlight.Adornee = character
+        visual.highlight.FillColor = roleColor
+        visual.highlight.OutlineColor = getStrokeColor(roleColor)
+        visual.highlight.FillTransparency = alive and 0.5 or 0.7
+        visual.highlight.Enabled = showHighlight
+    end
+
+    if visual.billboard and visual.label then
+        visual.billboard.Adornee = adornee
+        visual.billboard.Enabled = showTag and adornee ~= nil
+        local desired = displayName .. "\n[" .. role .. "]"
+        if visual.label.Text ~= desired then
+            visual.label.Text = desired
+        end
+        visual.label.TextColor3 = roleColor
+        visual.label.TextStrokeColor3 = getStrokeColor(roleColor)
+    end
+end
+
+local function refreshAllPlayers(force)
+    for _, player in ipairs(Players:GetPlayers()) do
+        updatePlayer(player, force == true)
+    end
+end
+
+local function destroyTrackedVisual(store, key)
+    local visual = store[key]
+    if visual == true then
+        store[key] = nil
+        return
+    end
+    destroyEspObjects(visual)
+    store[key] = nil
 end
 
 removeCoinESP = function(coin)
     if not coin then return end
-    local highlight = coin:FindFirstChild("CoinHighlight")
-    if highlight then highlight:Destroy() end
-    local billboard = coin:FindFirstChild("CoinBillboard")
-    if billboard then billboard:Destroy() end
-    coinVisuals[coin] = nil
+    destroyTrackedVisual(coinVisuals, coin)
+    if coin.Parent then
+        local highlight = coin:FindFirstChild("CoinHighlight")
+        if highlight then highlight:Destroy() end
+        local billboard = coin:FindFirstChild("CoinBillboard")
+        if billboard then billboard:Destroy() end
+    end
 end
 
 local function updateCoinVisual(coin, rootPos, showDistance)
@@ -2028,56 +2429,57 @@ local function updateCoinVisual(coin, rootPos, showDistance)
         return
     end
 
-    local highlight = coin:FindFirstChild("CoinHighlight")
-    if not highlight then
-        highlight = Instance.new("Highlight")
+    local visual = coinVisuals[coin]
+    if type(visual) ~= "table" or not visual.highlight or not visual.highlight.Parent then
+        destroyEspObjects(visual)
+        local folder = getEspFolder()
+        local highlight = Instance.new("Highlight")
         highlight.Name = "CoinHighlight"
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = COIN_ESP_COLOR
         highlight.FillTransparency = 0.35
         highlight.OutlineColor = getStrokeColor(COIN_ESP_COLOR)
         highlight.OutlineTransparency = 0
-        highlight.Parent = coin
+        highlight.Adornee = coin
+        highlight.Parent = folder
+
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "CoinBillboard"
+        billboard.Size = UDim2.fromOffset(120, 36)
+        billboard.StudsOffset = Vector3.new(0, 1.5, 0)
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 1000
+        billboard.LightInfluence = 0
+        billboard.ResetOnSpawn = false
+        billboard.Adornee = coin
+        billboard.Parent = folder
+
+        local label = Instance.new("TextLabel")
+        label.Name = "TextLabel"
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 13
+        label.TextColor3 = COIN_ESP_COLOR
+        label.TextStrokeTransparency = 0
+        label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
+        label.Text = "COIN"
+        label.Parent = billboard
+
+        visual = { highlight = highlight, billboard = billboard, label = label }
+        coinVisuals[coin] = visual
+    else
+        visual.highlight.Adornee = coin
+        visual.billboard.Adornee = coin
     end
 
-    if showDistance then
-        local billboard = coin:FindFirstChild("CoinBillboard")
-        if not billboard then
-            billboard = Instance.new("BillboardGui")
-            billboard.Name = "CoinBillboard"
-            billboard.Size = UDim2.fromOffset(120, 36)
-            billboard.StudsOffset = Vector3.new(0, 1.5, 0)
-            billboard.AlwaysOnTop = true
-            billboard.MaxDistance = 1000
-            billboard.LightInfluence = 0
-            billboard.Parent = coin
-
-            local label = Instance.new("TextLabel")
-            label.Name = "TextLabel"
-            label.Size = UDim2.fromScale(1, 1)
-            label.BackgroundTransparency = 1
-            label.Font = Enum.Font.GothamBold
-            label.TextSize = 13
-            label.TextColor3 = COIN_ESP_COLOR
-            label.TextStrokeTransparency = 0
-            label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
-            label.Text = "Coin"
-            label.Parent = billboard
-        end
-        
-        local label = billboard:FindFirstChild("TextLabel")
-        if label and rootPos then
-            label.TextColor3 = COIN_ESP_COLOR
-            label.TextStrokeColor3 = getStrokeColor(COIN_ESP_COLOR)
-            local dist = math.floor((rootPos - coin.Position).Magnitude + 0.5)
-            local newText = string.format("COIN\n%d studs", dist)
-            if label.Text ~= newText then
-                label.Text = newText
-            end
+    if showDistance and visual.label and rootPos then
+        local dist = math.floor((rootPos - coin.Position).Magnitude + 0.5)
+        local newText = string.format("COIN\n%d studs", dist)
+        if visual.label.Text ~= newText then
+            visual.label.Text = newText
         end
     end
-
-    coinVisuals[coin] = true
 end
 
 local function updateCoinESP(updateDistances)
@@ -2086,16 +2488,11 @@ local function updateCoinESP(updateDistances)
 
     if not enabled then
         for coin in pairs(coinVisuals) do
-            if coin.Parent then
-                removeCoinESP(coin)
-            else
-                coinVisuals[coin] = nil
-            end
+            removeCoinESP(coin)
         end
         return
     end
 
-    -- Clean dead refs
     for coin in pairs(coinVisuals) do
         if not isActiveCoin(coin) then
             removeCoinESP(coin)
@@ -2120,12 +2517,10 @@ local function updateCoinESP(updateDistances)
     end
 end
 
-
 -- ============================
 -- GUN DROP ESP
 -- ============================
 local GUN_ESP_COLOR = Color3.fromRGB(50, 145, 255)
-gunDropVisuals = {} -- [BasePart] = true
 
 local function getCachedGunDropPart()
     if cachedGunDropPart and cachedGunDropPart.Parent then
@@ -2134,7 +2529,6 @@ local function getCachedGunDropPart()
     cachedGunDropPart = nil
     local map = getCurrentMap()
     if not map then return nil end
-    -- FindFirstChild with recursive=true is much cheaper than GetDescendants
     local gunObj = map:FindFirstChild("GunDrop", true)
     if not gunObj then return nil end
     local part
@@ -2153,11 +2547,13 @@ end
 
 removeGunESP = function(part)
     if not part then return end
-    local h = part:FindFirstChild("GunDropHighlight")
-    if h then h:Destroy() end
-    local b = part:FindFirstChild("GunDropBillboard")
-    if b then b:Destroy() end
-    gunDropVisuals[part] = nil
+    destroyTrackedVisual(gunDropVisuals, part)
+    if part.Parent then
+        local h = part:FindFirstChild("GunDropHighlight")
+        if h then h:Destroy() end
+        local b = part:FindFirstChild("GunDropBillboard")
+        if b then b:Destroy() end
+    end
 end
 
 local function updateGunESP()
@@ -2167,52 +2563,42 @@ local function updateGunESP()
         for part in pairs(gunDropVisuals) do
             removeGunESP(part)
         end
-        table.clear(gunDropVisuals)
         return
     end
 
-    -- Clean up dead refs
-    for part in pairs(gunDropVisuals) do
-        if not part.Parent then
-            gunDropVisuals[part] = nil
-        end
-    end
-
     local gunPart = getCachedGunDropPart()
-
-    -- Remove visuals for any parts that are no longer the gun drop
     for part in pairs(gunDropVisuals) do
-        if part ~= gunPart then
+        if part ~= gunPart or not part.Parent then
             removeGunESP(part)
         end
     end
 
     if not gunPart then return end
 
-    -- Add highlight if missing
-    local highlight = gunPart:FindFirstChild("GunDropHighlight")
-    if not highlight then
-        highlight = Instance.new("Highlight")
+    local visual = gunDropVisuals[gunPart]
+    if type(visual) ~= "table" or not visual.highlight or not visual.highlight.Parent then
+        destroyEspObjects(visual)
+        local folder = getEspFolder()
+        local highlight = Instance.new("Highlight")
         highlight.Name = "GunDropHighlight"
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.FillColor = GUN_ESP_COLOR
         highlight.FillTransparency = 0.3
         highlight.OutlineColor = getStrokeColor(GUN_ESP_COLOR)
         highlight.OutlineTransparency = 0
-        highlight.Parent = gunPart
-    end
+        highlight.Adornee = gunPart
+        highlight.Parent = folder
 
-    -- Add billboard if missing
-    local billboard = gunPart:FindFirstChild("GunDropBillboard")
-    if not billboard then
-        billboard = Instance.new("BillboardGui")
+        local billboard = Instance.new("BillboardGui")
         billboard.Name = "GunDropBillboard"
         billboard.Size = UDim2.fromOffset(140, 40)
         billboard.StudsOffset = Vector3.new(0, 2.5, 0)
         billboard.AlwaysOnTop = true
         billboard.MaxDistance = 1000
         billboard.LightInfluence = 0
-        billboard.Parent = gunPart
+        billboard.ResetOnSpawn = false
+        billboard.Adornee = gunPart
+        billboard.Parent = folder
 
         local label = Instance.new("TextLabel")
         label.Name = "TextLabel"
@@ -2225,77 +2611,85 @@ local function updateGunESP()
         label.TextStrokeColor3 = getStrokeColor(GUN_ESP_COLOR)
         label.Text = "GUN"
         label.Parent = billboard
+
+        visual = { highlight = highlight, billboard = billboard, label = label }
+        gunDropVisuals[gunPart] = visual
+    else
+        visual.highlight.Adornee = gunPart
+        visual.billboard.Adornee = gunPart
     end
 
-    -- Update distance text
-    local label = billboard and billboard:FindFirstChild("TextLabel")
-    if label then
-        label.TextColor3 = GUN_ESP_COLOR
-        label.TextStrokeColor3 = getStrokeColor(GUN_ESP_COLOR)
+    if visual.label then
         local _, _, root = getCharacterParts()
         if root then
             local dist = math.floor((root.Position - gunPart.Position).Magnitude + 0.5)
             local newText = "GUN\n" .. dist .. " studs"
-            if label.Text ~= newText then
-                label.Text = newText
+            if visual.label.Text ~= newText then
+                visual.label.Text = newText
             end
         end
     end
-
-    gunDropVisuals[gunPart] = true
 end
--- Hook character tools so role ESP updates without full spam
+
+local function hookBackpack(player, backpack)
+    if not backpack then return end
+    trackConnection(backpack.ChildAdded:Connect(function()
+        task.defer(updatePlayer, player)
+    end))
+    trackConnection(backpack.ChildRemoved:Connect(function()
+        task.defer(updatePlayer, player)
+    end))
+end
+
 local function hookPlayer(player)
     if player == LocalPlayer then return end
 
     local function onCharacter(character)
         task.defer(function()
-            updatePlayer(player)
+            updatePlayer(player, true)
         end)
 
         trackConnection(character.ChildAdded:Connect(function(child)
             if child:IsA("Tool") then
-                task.defer(function()
-                    updatePlayer(player)
-                end)
+                task.defer(updatePlayer, player)
             end
         end))
         trackConnection(character.ChildRemoved:Connect(function(child)
             if child:IsA("Tool") then
-                task.defer(function()
-                    updatePlayer(player)
-                end)
+                task.defer(updatePlayer, player)
             end
         end))
+
+        local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+        if humanoid then
+            trackConnection(humanoid.Died:Connect(function()
+                task.defer(updatePlayer, player, true)
+            end))
+        end
     end
 
     if player.Character then
         onCharacter(player.Character)
     end
     trackConnection(player.CharacterAdded:Connect(onCharacter))
+    trackConnection(player.CharacterRemoving:Connect(function(character)
+        hidePlayerVisuals(playerEsp[player])
+        stripLegacyEsp(character)
+    end))
 
-    -- Re-run ESP when Alive attribute changes (round start/end)
     trackConnection(player.AttributeChanged:Connect(function(attr)
         if attr == "Alive" then
-            task.defer(function()
-                updatePlayer(player)
-            end)
+            task.defer(updatePlayer, player, true)
         end
     end))
 
-    local backpack = player:FindFirstChild("Backpack")
-    if backpack then
-        trackConnection(backpack.ChildAdded:Connect(function()
-            task.defer(function()
-                updatePlayer(player)
-            end)
-        end))
-        trackConnection(backpack.ChildRemoved:Connect(function()
-            task.defer(function()
-                updatePlayer(player)
-            end)
-        end))
-    end
+    hookBackpack(player, player:FindFirstChild("Backpack"))
+    trackConnection(player.ChildAdded:Connect(function(child)
+        if child:IsA("Backpack") then
+            hookBackpack(player, child)
+            task.defer(updatePlayer, player)
+        end
+    end))
 end
 
 for _, player in ipairs(Players:GetPlayers()) do
@@ -2304,13 +2698,7 @@ end
 trackConnection(Players.PlayerAdded:Connect(hookPlayer))
 
 trackConnection(Players.PlayerRemoving:Connect(function(player)
-    local cached = playerRoleCache[player]
-    if cached and cached.character then
-        removeVisuals(cached.character)
-    elseif player.Character then
-        removeVisuals(player.Character)
-    end
-    playerRoleCache[player] = nil
+    removeVisuals(player)
     if selectedPlayerName == player.Name then
         selectedPlayerName = nil
     end
@@ -2325,17 +2713,18 @@ trackConnection(LocalPlayer.CharacterAdded:Connect(function(character)
     end
 end))
 
--- ESP refresh — optimized to reduce stuttering
 task.spawn(function()
     local espTick = 0
     while uiRunning do
         espTick = espTick + 1
-        refreshAllPlayers()
-        -- Only update coin/gun distances every other tick to reduce overhead
+        -- Role poll is cheap now; cache skips unchanged players.
+        refreshAllPlayers(false)
         updateCoinESP(espTick % 2 == 0)
-        updateGunESP()
+        if espTick % 2 == 0 then
+            updateGunESP()
+        end
         updateRoundHud()
-        task.wait(0.2)
+        task.wait(0.25)
     end
 end)
 
@@ -2738,7 +3127,7 @@ espTab:CreateToggle({
     value = true,
     flag = "EnableESP",
     callback = function()
-        refreshAllPlayers()
+        refreshAllPlayers(true)
         updateCoinESP(false)
         updateGunESP()
     end,
@@ -2750,7 +3139,7 @@ espTab:CreateToggle({
     value = true,
     flag = "Nametags",
     callback = function()
-        refreshAllPlayers()
+        refreshAllPlayers(true)
     end,
 })
 
@@ -2760,7 +3149,7 @@ espTab:CreateToggle({
     value = true,
     flag = "Highlights",
     callback = function()
-        refreshAllPlayers()
+        refreshAllPlayers(true)
     end,
 })
 
@@ -2770,7 +3159,7 @@ espTab:CreateToggle({
     value = true,
     flag = "ShowInnocentNames",
     callback = function()
-        refreshAllPlayers()
+        refreshAllPlayers(true)
     end,
 })
 
@@ -2800,7 +3189,7 @@ espTab:CreateToggle({
     value = true,
     flag = "SpectatorESP",
     callback = function()
-        refreshAllPlayers()
+        refreshAllPlayers(true)
     end,
 })
 
@@ -2809,12 +3198,9 @@ espTab:CreateButton({
     description = "Rebuild player nametags and role highlights only",
     callback = function()
         for _, player in ipairs(Players:GetPlayers()) do
-            if player.Character then
-                removeVisuals(player.Character)
-            end
-            playerRoleCache[player] = nil
+            removeVisuals(player)
         end
-        refreshAllPlayers()
+        refreshAllPlayers(true)
         window:Toast({
             title = "Player ESP",
             subtitle = "Refreshed",
@@ -2849,6 +3235,7 @@ farmTab:CreateToggle({
     value = false,
     flag = "AutoCoins",
     callback = function(enabled)
+        getgenv().MM2EnhancedPersist.AutoCoins = enabled == true
         if enabled then
             local allowed, reason = canUseFarmAutomation()
             if not allowed then
@@ -2857,6 +3244,18 @@ farmTab:CreateToggle({
             end
             coinFarmLoop()
         end
+        applyFarmRendering()
+    end,
+})
+
+farmTab:CreateToggle({
+    name = "Disable 3D Rendering",
+    description = "Turns off 3D rendering while Auto Coin Farm or Auto Gun Pickup is running (lowers CPU load)",
+    value = false,
+    flag = "FarmNoRender",
+    callback = function(enabled)
+        getgenv().MM2EnhancedPersist.FarmNoRender = enabled == true
+        applyFarmRendering()
     end,
 })
 
@@ -2866,6 +3265,7 @@ farmTab:CreateToggle({
     value = false,
     flag = "AutoGunDrop",
     callback = function(enabled)
+        getgenv().MM2EnhancedPersist.AutoGunDrop = enabled == true
         if enabled then
             local allowed, reason = canUseFarmAutomation()
             if not allowed then
@@ -2874,8 +3274,27 @@ farmTab:CreateToggle({
             end
             gunFarmLoop()
         end
+        applyFarmRendering()
     end,
 })
+
+do
+    local persist = getgenv().MM2EnhancedPersist
+    if persist.FarmNoRender then
+        flagValues.FarmNoRender = true
+        applyFarmRendering()
+    end
+    if persist.AutoCoins then
+        flagValues.AutoCoins = true
+        coinFarmLoop()
+        applyFarmRendering()
+    end
+    if persist.AutoGunDrop then
+        flagValues.AutoGunDrop = true
+        gunFarmLoop()
+        applyFarmRendering()
+    end
+end
 
 farmTab:CreateSection({ name = "Tuning" })
 
@@ -3040,31 +3459,74 @@ local function isAlivePlayer(player, character)
         and player:GetAttribute("Alive") == true
 end
 
+local function getKnifeTool()
+    local character = LocalPlayer.Character
+    if character then
+        local equipped = character:FindFirstChild("Knife")
+        if equipped then return equipped end
+    end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    return backpack and backpack:FindFirstChild("Knife")
+end
+
+local function equipKnife()
+    local knife = getKnifeTool()
+    if not knife then return nil end
+    local character, humanoid = getCharacterParts()
+    if character and humanoid and knife.Parent ~= character then
+        pcall(function()
+            humanoid:EquipTool(knife)
+        end)
+    end
+    return getKnifeTool()
+end
+
+local function getKnifeHitPart(knife)
+    if not knife then return nil end
+    return knife:FindFirstChild("Handle")
+        or knife:FindFirstChildWhichIsA("BasePart")
+end
+
+local function tryKnifeHit(knife, targetRoot)
+    if not knife or not targetRoot then return end
+    pcall(function()
+        knife:Activate()
+    end)
+    local handle = getKnifeHitPart(knife)
+    if handle and firetouchinterest then
+        pcall(function()
+            firetouchinterest(handle, targetRoot, 0)
+            firetouchinterest(handle, targetRoot, 1)
+        end)
+    end
+end
+
 local function startBringLoop()
     if bringLoop then return end
     bringLoop = true
     task.spawn(function()
-        while bringLoop do
+        while bringLoop and not scriptUnloaded do
             if not canUseBring() then
-                bringLoop = false
-                break
+                task.wait(0.15)
+                continue
             end
 
             local _, _, myRoot = getCharacterParts()
+            local knife = equipKnife()
             if myRoot then
-                local bringCFrame = myRoot.CFrame * CFrame.new(0, 0, -1.5)
-                local playersList = Players:GetPlayers()
-                for _, player in ipairs(playersList) do
+                local bringCFrame = myRoot.CFrame * CFrame.new(0, 0, -2.5)
+                for _, player in ipairs(Players:GetPlayers()) do
                     if player ~= LocalPlayer and player.Character and shouldBring(player) then
                         local targetChar = player.Character
                         local targetRoot = getRoot(targetChar)
                         if targetRoot and isAlivePlayer(player, targetChar) then
                             targetRoot.CFrame = bringCFrame
+                            tryKnifeHit(knife, targetRoot)
                         end
                     end
                 end
             end
-            task.wait(0.05)
+            task.wait()
         end
     end)
 end
@@ -3074,24 +3536,24 @@ local function stopBringLoop()
 end
 
 combatTab:CreateKeybind({
-    name = "Bring All Keybind",
-    description = "Bring living players 1.5 studs ahead while you are Murderer",
+    name = "Bring / Kill All",
+    description = "G: Murderer only — stack everyone 2.5 studs in front of you and knife them there",
     value = Enum.KeyCode.G,
     hold = false,
     flag = "BringAllKey",
     callback = function()
         if not canUseBring() then
             stopBringLoop()
-            window:Toast({ title = "Bring", subtitle = "Murderer only", position = "Top", duration = 2 })
+            window:Toast({ title = "Kill All", subtitle = "Murderer only", position = "Top", duration = 2 })
             return
         end
 
         if bringLoop then
             stopBringLoop()
-            window:Toast({ title = "Bring", subtitle = "Stopped", position = "Top", duration = 2 })
+            window:Toast({ title = "Kill All", subtitle = "Stopped", position = "Top", duration = 2 })
         else
             startBringLoop()
-            window:Toast({ title = "Bring", subtitle = "Active", position = "Top", duration = 2 })
+            window:Toast({ title = "Kill All", subtitle = "Active", position = "Top", duration = 2 })
         end
     end,
 })
@@ -3717,13 +4179,71 @@ miscTab:CreateButton({
     end,
 })
 
+local farmRejoinQueued = false
+local function shouldAutoRejoinOnKick()
+    local persist = getgenv().MM2EnhancedPersist
+    return getFlag("AutoCoins", false)
+        or getFlag("AutoGunDrop", false)
+        or (persist and (persist.AutoCoins or persist.AutoGunDrop))
+end
+
+local function rejoinAfterKick()
+    if farmRejoinQueued or scriptUnloaded or not shouldAutoRejoinOnKick() then
+        return
+    end
+    farmRejoinQueued = true
+    pcall(function()
+        local enqueue = queueteleport
+        if enqueue then
+            local persist = getgenv().MM2EnhancedPersist
+            enqueue(string.format([[
+getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
+getgenv().MM2EnhancedPersist.AutoCoins = %s
+getgenv().MM2EnhancedPersist.AutoGunDrop = %s
+getgenv().MM2EnhancedPersist.FarmNoRender = %s
+]], tostring(persist.AutoCoins == true), tostring(persist.AutoGunDrop == true), tostring(persist.FarmNoRender == true)))
+        end
+    end)
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end)
+end
+
+trackConnection(GuiService.ErrorMessageChanged:Connect(function()
+    local message = ""
+    pcall(function()
+        message = tostring(GuiService:GetErrorMessage() or "")
+    end)
+    if message ~= "" then
+        rejoinAfterKick()
+    end
+end))
+
+pcall(function()
+    local promptGui = game:GetService("CoreGui"):FindFirstChild("RobloxPromptGui")
+    if promptGui then
+        local overlay = promptGui:FindFirstChild("promptOverlay")
+        if overlay then
+            trackConnection(overlay.ChildAdded:Connect(function(child)
+                if child.Name == "ErrorPrompt" then
+                    rejoinAfterKick()
+                end
+            end))
+        end
+    end
+end)
+
 miscTab:CreateSection({ name = "Clipboard" })
 
 miscTab:CreateButton({
     name = "Copy Server JobId",
     description = "Copies the current server JobId to clipboard",
     callback = function()
-        setclipboard(game.JobId)
+        if not everyClipboard then
+            window:Toast({ title = "Clipboard", subtitle = "Executor missing setclipboard", position = "Top", duration = 3 })
+            return
+        end
+        everyClipboard(game.JobId)
         window:Toast({
             title = "Copied",
             subtitle = "Server JobId copied to clipboard",
@@ -3737,7 +4257,11 @@ miscTab:CreateButton({
     name = "Copy Place ID",
     description = "Copies the game PlaceId to clipboard",
     callback = function()
-        setclipboard(tostring(game.PlaceId))
+        if not everyClipboard then
+            window:Toast({ title = "Clipboard", subtitle = "Executor missing setclipboard", position = "Top", duration = 3 })
+            return
+        end
+        everyClipboard(tostring(game.PlaceId))
         window:Toast({
             title = "Copied",
             subtitle = "PlaceId: " .. game.PlaceId,
@@ -3783,57 +4307,12 @@ miscTab:CreateButton({
 -- ============================
 -- SETTINGS TAB
 -- ============================
-settingsTab:CreateSection({ name = "Configuration" })
-
-settingsTab:CreateButton({
-    name = "Save Configuration",
-    callback = function()
-        local success = window:Save()
-        window:Notify({
-            title = success and "Saved" or "Save Failed",
-            content = success and "Configuration saved to disk." or "Could not save.",
-            duration = 4,
-        })
-    end,
-})
-
-settingsTab:CreateButton({
-    name = "Load Configuration",
-    callback = function()
-        window:Load()
-        window:Notify({
-            title = "Loaded",
-            content = "Configuration loaded from disk.",
-            duration = 4,
-        })
-    end,
-})
-
-settingsTab:CreateSection({ name = "Theme" })
-
-settingsTab:CreateDropdown({
-    name = "Theme",
-    options = { "default", "cobalt", "ember", "amethyst", "frost", "rose" },
-    value = "cobalt",
-    multiSelect = false,
-    placeholder = "Select theme",
-    flag = "UITheme",
-    callback = function(selected)
-        window:ChangeTheme(selected[1] or selected)
-    end,
-})
+pcall(function()
+    InterfaceManager:BuildInterfaceSection(settingsTab)
+    SaveManager:BuildConfigSection(settingsTab)
+end)
 
 settingsTab:CreateSection({ name = "Window" })
-
-settingsTab:CreateKeybind({
-    name = "Toggle Window",
-    value = Enum.KeyCode.Q,
-    hold = false,
-    flag = "ToggleKey",
-    callback = function()
-        window:ToggleHide()
-    end,
-})
 
 settingsTab:CreateButton({
     name = "Unload UI",
@@ -3873,8 +4352,45 @@ settingsTab:CreateStat({
 -- INIT
 -- ============================
 
+pcall(function()
+    window:SelectTab(1)
+end)
+
+loadingConfig = true
+pcall(function()
+    if typeof(isfile) == "function" and isfile(SaveManager.Folder .. "/settings/" .. DEFAULT_CONFIG_NAME .. ".json") then
+        SaveManager:Load(DEFAULT_CONFIG_NAME)
+    else
+        SaveManager:LoadAutoloadConfig()
+    end
+end)
+task.delay(0.35, function()
+    loadingConfig = false
+    pcall(function()
+        SaveManager:Save(DEFAULT_CONFIG_NAME)
+        if writefile then
+            writefile(SaveManager.Folder .. "/settings/autoload.txt", DEFAULT_CONFIG_NAME)
+        end
+    end)
+end)
+
 window:Notify({
     title = "MM2 Enhanced is ready",
-    content = "Alive-gated ESP, Gun ESP, Invisible via anim ID. Q = UI.",
+    content = "Fluent UI. Settings auto-save. Q = hide menu.",
     duration = 5,
 })
+
+if #missingRequired > 0 then
+    window:Notify({
+        title = "Missing required functions",
+        content = table.concat(missingRequired, " | "),
+        duration = 10,
+    })
+end
+if #missingOptional > 0 then
+    window:Notify({
+        title = "Missing optional functions",
+        content = table.concat(missingOptional, " | "),
+        duration = 8,
+    })
+end
