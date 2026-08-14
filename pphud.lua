@@ -126,10 +126,10 @@ end
   }, {
       Utilities:Create("Frame", {
           Name = "Main",
-          Size = UDim2.new(0, 1080, 0, 720),
+          Size = UDim2.new(0, 600, 0, 400),
           BackgroundColor3 = Color3.fromRGB(255, 255, 255), -- Colors.Primary
           ClipsDescendants = true,
-          Position = UDim2.new(0, 420, 0, 160)
+          Position = UDim2.new(0, 80, 0, 80)
       }, {
           Utilities:Create("UIGradient", {
               Color = ColorSequence.new({
@@ -383,11 +383,11 @@ end
 
   local SizeX = Instance.new("NumberValue", Window.Main)
   SizeX.Name = "X"
-  SizeX.Value = 1080
+  SizeX.Value = 600
 
   local SizeY = Instance.new("NumberValue", Window.Main)
   SizeY.Name = "Y"
-  SizeY.Value = 720
+  SizeY.Value = 400
 
   local function ResizeTabs()
     local TabSize = 1 / self.Tabs
@@ -403,8 +403,8 @@ end
 
   local function Resize()
     local MouseLocation = Utilities:GetMouse()
-    local X = math.clamp(MouseLocation.X - Window.Main.AbsolutePosition.X, 300, 1300)
-    local Y = math.clamp(MouseLocation.Y - Window.Main.AbsolutePosition.Y, 165, 730)
+    local X = math.clamp(MouseLocation.X - Window.Main.AbsolutePosition.X, 480, 900)
+    local Y = math.clamp(MouseLocation.Y - Window.Main.AbsolutePosition.Y, 280, 560)
     
     SizeX.Value = X
     SizeY.Value = Y
@@ -675,11 +675,11 @@ end
       Parent = SectionArgs.Side == "Left" and Left or Right,
       BackgroundColor3 = Color3.fromRGB(167, 54, 54),
       BackgroundTransparency = 1,
-      Size = UDim2.new(0, 436, 0, 36) -- +64
+      Size = UDim2.new(0, 286, 0, 36) -- +64
   }, {
       Utilities:Create("TextLabel", {
           Name = "SectionText",
-          Size = UDim2.new(0, 436, 0, 26),
+          Size = UDim2.new(0, 286, 0, 26),
           Text = SectionArgs.Text,
           TextXAlignment = Enum.TextXAlignment.Left,
           TextSize = 14,
@@ -692,12 +692,12 @@ end
       Utilities:Create("Frame", {
           Name = "Divider",
           Position = UDim2.new(0, 0, 0, 28),
-          Size = UDim2.new(0, 436, 0, 1),
+          Size = UDim2.new(0, 286, 0, 1),
           BackgroundColor3 = Colors.Divider
       }),
       Utilities:Create("Frame", {
         Name = "Container",
-        Size = UDim2.new(0, 436, 0, 0),
+        Size = UDim2.new(0, 286, 0, 0),
         BackgroundTransparency = 1,
         Position = UDim2.new(0, 0, 0, 38)
       }, {
@@ -720,8 +720,8 @@ end
   SectionContainer.ChildAdded:Connect(function()
     SectionY = SectionY + 21
 
-    Section.Size = UDim2.new(0, 436, 0, SectionY)
-    SectionContainer.Size = UDim2.new(0, 436, 0, SectionY)
+    Section.Size = UDim2.new(0, 286, 0, SectionY)
+    SectionContainer.Size = UDim2.new(0, 286, 0, SectionY)
   end)
 
   function SectionTable:Check(CheckArgs)
@@ -737,7 +737,7 @@ end
   local Check = Utilities:Create("Frame", {
     Name = "Check",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 436, 0, 21),
+    Size = UDim2.new(0, 286, 0, 21),
     BackgroundTransparency = 1,
   }, {
     Utilities:Create("TextButton", {
@@ -834,7 +834,7 @@ end
   local Button = Utilities:Create("Frame", {
     Name = "Button",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 436, 0, 21),
+    Size = UDim2.new(0, 286, 0, 21),
     BackgroundTransparency = 1
   }, {
     Utilities:Create("Frame", {
@@ -936,7 +936,7 @@ end
   local Slider = Utilities:Create("Frame", {
     Name = "Slider",
     Parent = SectionContainer,
-    Size = UDim2.new(0, 436, 0, 21),
+    Size = UDim2.new(0, 286, 0, 21),
     BackgroundTransparency = 1
   }, {
     Utilities:Create("Frame", {
@@ -1045,7 +1045,7 @@ end
     local Label = Utilities:Create("Frame", {
         Name = "Label",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 436, 0, 21),
+        Size = UDim2.new(0, 286, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("TextLabel", {
@@ -1054,7 +1054,7 @@ end
             TextColor3 = Info.Color,
             RichText = true,
             BackgroundTransparency = 1,
-            Size = UDim2.new(0, 436, 0, 14),
+            Size = UDim2.new(0, 286, 0, 14),
             TextXAlignment = Enum.TextXAlignment.Left,
             TextSize = 13,
             Font = Enum.Font.SourceSansBold
@@ -1090,7 +1090,7 @@ end
         Name = "Dropdown",
         BackgroundTransparency = 1,
         Parent = SectionContainer,
-        Size = UDim2.new(0, 436, 0, 21)
+        Size = UDim2.new(0, 286, 0, 21)
     }, {
         Utilities:Create("Frame", {
             Name = "DropdownFrame",
@@ -1357,7 +1357,7 @@ end
     local Box = Utilities:Create("Frame", {
         Name = "Input",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 436, 0, 21),
+        Size = UDim2.new(0, 286, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("Frame", {
@@ -1423,7 +1423,7 @@ end
     local Bind = Utilities:Create("Frame", {
         Name = "Keybind",
         Parent = SectionContainer,
-        Size = UDim2.new(0, 436, 0, 21),
+        Size = UDim2.new(0, 286, 0, 21),
         BackgroundTransparency = 1
     }, {
         Utilities:Create("Frame", {
