@@ -653,35 +653,28 @@ isSpectator = function(player)
     end
 
     local lobby = Workspace:FindFirstChild("Lobby")
-    if lobby and character:IsDescendantOf(lobby) then
+    if lobby and (character:IsDescendantOf(lobby) or (getRoot(character) and getRoot(character):IsDescendantOf(lobby))) then
         return true
     end
 
-    -- Mid-round: people standing in the lobby are spectators even if Alive is stale.
+    -- Mid-round: if a map is loaded and they are clearly outside it, they are spectating.
+    -- Do not use the Lobby model's bounding box — it is often huge and tags everyone.
     local map = cachedMap
-    if not (map and map.Parent) then
-        for _, object in ipairs(Workspace:GetChildren()) do
-            if object:IsA("Model") and object:GetAttribute("MapID") ~= nil then
-                map = object
-                break
-            end
+    if map and map.Parent then
+        if character:IsDescendantOf(map) then
+            return false
         end
-    end
-    if map and lobby then
         local root = getRoot(character)
         if root then
-            if root:IsDescendantOf(lobby) then
-                return true
-            end
             local ok, cf, size = pcall(function()
-                return lobby:GetBoundingBox()
+                return map:GetBoundingBox()
             end)
             if ok and cf and size then
                 local localPos = cf:PointToObjectSpace(root.Position)
-                if math.abs(localPos.X) <= size.X * 0.5
-                    and math.abs(localPos.Y) <= size.Y * 0.5
-                    and math.abs(localPos.Z) <= size.Z * 0.5
-                then
+                local inside = math.abs(localPos.X) <= (size.X * 0.5) + 25
+                    and math.abs(localPos.Y) <= (size.Y * 0.5) + 50
+                    and math.abs(localPos.Z) <= (size.Z * 0.5) + 25
+                if not inside then
                     return true
                 end
             end
@@ -2483,14 +2476,33 @@ local function getEspFolder()
     end
     local parent
     pcall(function()
-        parent = game:GetService("CoreGui")
+        if type(gethui) == "function" then
+            parent = gethui()
+        end
     end)
     if not parent then
-        parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or PlayerGui
+        pcall(function()
+            parent = game:GetService("CoreGui")
+        end)
     end
-    espFolder = Instance.new("Folder")
-    espFolder.Name = "MM2EnhancedESP"
-    espFolder.Parent = parent
+    if not parent then
+        parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui")
+    end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MM2EnhancedESP"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.DisplayOrder = 1e6
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    pcall(function()
+        gui.Parent = parent
+    end)
+    if not gui.Parent and LocalPlayer then
+        pcall(function()
+            gui.Parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 1)
+        end)
+    end
+    espFolder = gui
     return espFolder
 end
 
@@ -2521,6 +2533,7 @@ local function destroyEspObjects(visual)
     if not visual then return end
     if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
     if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+    if visual.adornment then pcall(function() visual.adornment:Destroy() end) end
 end
 
 local function getEspAdornee(character)
@@ -2531,48 +2544,75 @@ local function getEspAdornee(character)
 end
 
 local function ensurePlayerVisuals(player)
+    local character = player.Character
     local visual = playerEsp[player]
-    if visual and visual.highlight and visual.highlight.Parent and visual.billboard and visual.billboard.Parent then
+    local highlightOk = visual
+        and visual.highlight
+        and visual.highlight.Parent
+        and (visual.highlight.Parent == character or visual.highlight.Adornee == character)
+    local billboardOk = visual and visual.billboard and visual.billboard.Parent
+    if highlightOk and billboardOk then
         return visual
     end
-    destroyEspObjects(visual)
+
+    if visual then
+        if not highlightOk then
+            if visual.highlight then pcall(function() visual.highlight:Destroy() end) end
+            visual.highlight = nil
+        end
+        if not billboardOk then
+            if visual.billboard then pcall(function() visual.billboard:Destroy() end) end
+            visual.billboard = nil
+            visual.label = nil
+        end
+    else
+        visual = {}
+        playerEsp[player] = visual
+    end
 
     local folder = getEspFolder()
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "RoleHighlight_" .. player.UserId
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlight.FillTransparency = 0.55
-    highlight.OutlineTransparency = 0
-    highlight.Enabled = false
-    highlight.Parent = folder
+    if not highlightOk then
+        local highlight = Instance.new("Highlight")
+        highlight.Name = "MM2RH"
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.FillTransparency = 0.55
+        highlight.OutlineTransparency = 0
+        highlight.Enabled = false
+        highlight.Adornee = character
+        if character then
+            highlight.Parent = character
+        else
+            highlight.Parent = folder
+        end
+        visual.highlight = highlight
+    end
 
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "RoleName_" .. player.UserId
-    billboard.Size = UDim2.fromOffset(220, 44)
-    billboard.StudsOffset = Vector3.new(0, 2.8, 0)
-    billboard.AlwaysOnTop = true
-    billboard.MaxDistance = 1000
-    billboard.LightInfluence = 0
-    billboard.ResetOnSpawn = false
-    billboard.Enabled = false
-    billboard.Parent = folder
+    if not billboardOk then
+        local billboard = Instance.new("BillboardGui")
+        billboard.Name = "RoleName_" .. player.UserId
+        billboard.Size = UDim2.fromOffset(220, 44)
+        billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+        billboard.AlwaysOnTop = true
+        billboard.MaxDistance = 1000
+        billboard.LightInfluence = 0
+        billboard.ResetOnSpawn = false
+        billboard.Enabled = false
+        billboard.Parent = folder
 
-    local label = Instance.new("TextLabel")
-    label.Name = "TextLabel"
-    label.Size = UDim2.fromScale(1, 1)
-    label.BackgroundTransparency = 1
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 14
-    label.TextWrapped = true
-    label.TextStrokeTransparency = 0
-    label.Parent = billboard
+        local label = Instance.new("TextLabel")
+        label.Name = "TextLabel"
+        label.Size = UDim2.fromScale(1, 1)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 14
+        label.TextWrapped = true
+        label.TextStrokeTransparency = 0
+        label.Parent = billboard
 
-    visual = {
-        highlight = highlight,
-        billboard = billboard,
-        label = label,
-    }
-    playerEsp[player] = visual
+        visual.billboard = billboard
+        visual.label = label
+    end
+
     return visual
 end
 
@@ -2682,6 +2722,11 @@ local function updatePlayer(player, force)
     local adornee = getEspAdornee(character)
 
     if visual.highlight then
+        if character and visual.highlight.Parent ~= character then
+            pcall(function()
+                visual.highlight.Parent = character
+            end)
+        end
         visual.highlight.Adornee = character
         visual.highlight.FillColor = roleColor
         visual.highlight.OutlineColor = getStrokeColor(roleColor)
@@ -2735,18 +2780,18 @@ local function updateCoinVisual(coin, rootPos, showDistance)
     end
 
     local visual = coinVisuals[coin]
-    if type(visual) ~= "table" or not visual.highlight or not visual.highlight.Parent then
+    if type(visual) ~= "table" or not visual.adornment or not visual.adornment.Parent or not visual.billboard or not visual.billboard.Parent then
         destroyEspObjects(visual)
         local folder = getEspFolder()
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "CoinHighlight"
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = COIN_ESP_COLOR
-        highlight.FillTransparency = 0.35
-        highlight.OutlineColor = getStrokeColor(COIN_ESP_COLOR)
-        highlight.OutlineTransparency = 0
-        highlight.Adornee = coin
-        highlight.Parent = folder
+        local adornment = Instance.new("BoxHandleAdornment")
+        adornment.Name = "CoinBox"
+        adornment.Adornee = coin
+        adornment.AlwaysOnTop = true
+        adornment.ZIndex = 8
+        adornment.Size = coin.Size + Vector3.new(0.25, 0.25, 0.25)
+        adornment.Color3 = COIN_ESP_COLOR
+        adornment.Transparency = 0.35
+        adornment.Parent = folder
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "CoinBillboard"
@@ -2771,10 +2816,10 @@ local function updateCoinVisual(coin, rootPos, showDistance)
         label.Text = "COIN"
         label.Parent = billboard
 
-        visual = { highlight = highlight, billboard = billboard, label = label }
+        visual = { adornment = adornment, billboard = billboard, label = label }
         coinVisuals[coin] = visual
     else
-        visual.highlight.Adornee = coin
+        visual.adornment.Adornee = coin
         visual.billboard.Adornee = coin
     end
 
@@ -2881,18 +2926,18 @@ updateGunESP = function()
     if not gunPart then return end
 
     local visual = gunDropVisuals[gunPart]
-    if type(visual) ~= "table" or not visual.highlight or not visual.highlight.Parent then
+    if type(visual) ~= "table" or not visual.adornment or not visual.adornment.Parent then
         destroyEspObjects(visual)
         local folder = getEspFolder()
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "GunDropHighlight"
-        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlight.FillColor = GUN_ESP_COLOR
-        highlight.FillTransparency = 0.3
-        highlight.OutlineColor = getStrokeColor(GUN_ESP_COLOR)
-        highlight.OutlineTransparency = 0
-        highlight.Adornee = gunPart
-        highlight.Parent = folder
+        local adornment = Instance.new("BoxHandleAdornment")
+        adornment.Name = "GunDropBox"
+        adornment.Adornee = gunPart
+        adornment.AlwaysOnTop = true
+        adornment.ZIndex = 10
+        adornment.Size = gunPart.Size + Vector3.new(0.4, 0.4, 0.4)
+        adornment.Color3 = GUN_ESP_COLOR
+        adornment.Transparency = 0.25
+        adornment.Parent = folder
 
         local billboard = Instance.new("BillboardGui")
         billboard.Name = "GunDropBillboard"
@@ -2917,10 +2962,10 @@ updateGunESP = function()
         label.Text = "GUN"
         label.Parent = billboard
 
-        visual = { highlight = highlight, billboard = billboard, label = label }
+        visual = { adornment = adornment, billboard = billboard, label = label }
         gunDropVisuals[gunPart] = visual
     else
-        visual.highlight.Adornee = gunPart
+        visual.adornment.Adornee = gunPart
         visual.billboard.Adornee = gunPart
     end
 
