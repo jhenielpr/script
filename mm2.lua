@@ -3331,32 +3331,12 @@ combatTab:CreateDropdown({
     end,
 })
 
-combatTab:CreateDropdown({
+combatTab:CreateKeybind({
     name = "Aim Key",
-    options = { "MouseButton2", "MouseButton1", "MouseButton3", "E", "F", "T", "V", "C", "X", "Z", "Q", "LeftControl", "LeftShift", "CapsLock" },
-    value = "MouseButton2",
+    description = "Click then press a keyboard key or mouse button (LMB/RMB/MMB)",
+    value = Enum.UserInputType.MouseButton2,
     flag = "AimbotKey",
     callback = function()
-        aiming = false
-    end,
-})
-
-combatTab:CreateKeybind({
-    name = "Custom Aim Key",
-    description = "Click then press a keyboard key or mouse button (LMB/RMB/MMB)",
-    value = Enum.KeyCode.E,
-    flag = "AimbotCustomKey",
-    callback = function(key)
-        local name = key
-        if typeof(key) == "EnumItem" then
-            name = key.Name
-        end
-        if type(name) == "string" and name ~= "" and name ~= "Unknown" then
-            flagValues.AimbotKey = name
-            if library and library.Flags then
-                library.Flags.AimbotKey = name
-            end
-        end
     end,
 })
 
