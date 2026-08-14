@@ -136,6 +136,10 @@ local window = Rayfield:CreateWindow({
     icon = TAB_ICONS.shield,
     theme = "cobalt",
     showName = "MM2",
+    locale = "en-us",
+    translator = function(text)
+        return text
+    end,
     configuration = {
         autoSave = true,
         autoLoad = true,
@@ -150,38 +154,38 @@ local loadingConfig = false
 local nativeCreateTab = window.CreateTab
 local nativeNotify = window.Notify
 local nativeToast = window.Toast
-local nativeGet = window.Get
 
-function window:Get(name)
-    if nativeGet then
-        local ok, value = pcall(nativeGet, self, name)
-        if ok and value ~= nil then
-            return value
-        end
+local function notifyPayload(data)
+    if type(data) ~= "table" then
+        return {
+            title = "MM2 Enhanced",
+            content = tostring(data or ""),
+            duration = 3,
+        }
     end
-    if self.Flags and self.Flags[name] ~= nil then
-        return self.Flags[name]
-    end
-    return flagValues[name]
+    return {
+        title = data.title or data.Title or "MM2 Enhanced",
+        content = data.content or data.Content or data.subtitle or "",
+        duration = data.duration or data.Duration or 3,
+    }
 end
 
 function window:Notify(data)
-    return nativeNotify(self, {
-        title = data.title or data.Title or "MM2 Enhanced",
-        content = data.content or data.Content or data.subtitle or "",
-        duration = data.duration or data.Duration or 3,
-    })
+    if type(nativeNotify) ~= "function" then
+        return
+    end
+    return nativeNotify(self, notifyPayload(data))
 end
 
 function window:Toast(data)
-    return nativeToast(self, {
-        title = data.title or data.Title or "MM2 Enhanced",
-        content = data.content or data.Content or data.subtitle or "",
-        duration = data.duration or data.Duration or 3,
-    })
+    if type(nativeToast) ~= "function" then
+        return window:Notify(data)
+    end
+    return nativeToast(self, notifyPayload(data))
 end
 
 function window:CreateTab(config)
+    config = config or {}
     return nativeCreateTab(self, {
         name = config.name or config.Name,
         icon = resolveIcon(config.icon or config.Icon),
@@ -660,16 +664,25 @@ local function getFlag(name, fallback)
     if scriptUnloaded then
         return fallback
     end
-    local ok, value = pcall(function()
-        return window:Get(name)
-    end)
-    if ok and value ~= nil then
-        if type(value) == "table" then
-            return value[1] or fallback
+    local value
+    if window.Flags ~= nil then
+        local ok, flagged = pcall(function()
+            return window.Flags[name]
+        end)
+        if ok then
+            value = flagged
         end
-        return value
     end
-    return fallback
+    if value == nil then
+        value = flagValues[name]
+    end
+    if value == nil then
+        return fallback
+    end
+    if type(value) == "table" then
+        return value[1] or fallback
+    end
+    return value
 end
 
 local function set3dRenderingEnabled(enabled)
@@ -2905,12 +2918,14 @@ local funTab = miscTab
 -- ============================
 homeTab:CreateSection({ name = "Overview" })
 
-homeTab:CreateStat({
-    name = "Version",
-    value = 4.5,
-    suffix = "",
-    compact = true,
-})
+pcall(function()
+    homeTab:CreateStat({
+        name = "Version",
+        value = 4.5,
+        suffix = "",
+        compact = true,
+    })
+end)
 
 homeTab:CreateToggle({
     name = "Round HUD",
@@ -3386,17 +3401,24 @@ farmTab:CreateSlider({
 
 farmTab:CreateSection({ name = "Status" })
 
-local coinStat = farmTab:CreateStat({
-    name = "Coins Available",
-    value = 0,
-    suffix = "",
-    compact = true,
-    changeMode = "absolute",
-})
+local coinStat
+pcall(function()
+    coinStat = farmTab:CreateStat({
+        name = "Coins Available",
+        value = 0,
+        suffix = "",
+        compact = true,
+        changeMode = "absolute",
+    })
+end)
 
 task.spawn(function()
     while uiRunning do
-        coinStat:Set(#getAvailableCoins())
+        if coinStat and coinStat.Set then
+            pcall(function()
+                coinStat:Set(#getAvailableCoins())
+            end)
+        end
         task.wait(1.5)
     end
 end)
