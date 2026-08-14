@@ -39,10 +39,10 @@ getcustomasset = missing("function", getcustomasset or getsynasset)
 getconnections = missing("function", getconnections or get_signal_cons)
 
 local requiredExecutor = {
-    { name = "writefile", fn = writefile, why = "Fluent config auto-save" },
-    { name = "readfile", fn = readfile, why = "Fluent config load" },
-    { name = "isfile", fn = isfile, why = "Fluent config load" },
-    { name = "makefolder", fn = makefolder, why = "Fluent config folder" },
+    { name = "writefile", fn = writefile, why = "Rayfield config auto-save" },
+    { name = "readfile", fn = readfile, why = "Rayfield config load" },
+    { name = "isfile", fn = isfile, why = "Rayfield config load" },
+    { name = "makefolder", fn = makefolder, why = "Rayfield config folder" },
 }
 
 local optionalExecutor = {
@@ -51,8 +51,8 @@ local optionalExecutor = {
     { name = "getcustomasset", fn = getcustomasset, why = "Los Pollos image" },
     { name = "queue_on_teleport", fn = queueteleport, why = "Keep farm flags after kick/rejoin" },
     { name = "setclipboard", fn = everyClipboard, why = "Copy JobId / PlaceId" },
-    { name = "listfiles", fn = listfiles, why = "Fluent named config list" },
-    { name = "isfolder", fn = isfolder, why = "Fluent folder checks" },
+    { name = "listfiles", fn = listfiles, why = "Rayfield named config list" },
+    { name = "isfolder", fn = isfolder, why = "Rayfield folder checks" },
 }
 
 local missingRequired, missingOptional = {}, {}
@@ -88,310 +88,101 @@ getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
 
 -- ============================
--- FLUENT LOAD
+-- RAYFIELD GEN2
 -- ============================
-local Fluent = loadstring(game:HttpGet(
-    "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
-))()
-local SaveManager = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"
-))()
-local InterfaceManager = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"
-))()
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
--- ============================
--- WINDOW
--- ============================
-local window = Fluent:CreateWindow({
-    Title = "MM2 Enhanced",
-    SubTitle = "MM2 utility suite",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
-    Acrylic = false,
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.Q,
-})
+-- Lucide names (WindUI/Fluent) -> Roblox asset ids (Rayfield Gen2).
+-- scan-eye / sparkles are not in the older Lucide pack, so they map to eye / star.
+local TAB_ICONS = {
+    move = 7743870731,
+    swords = 7743872758, -- target (no swords asset in this pack)
+    coins = 7743866529,
+    ["scan-eye"] = 7733774602, -- eye
+    eye = 7733774602,
+    scan = 8997386861,
+    users = 7743876054,
+    map = 7733992789,
+    sparkles = 7734068321, -- star
+    star = 7734068321,
+    wand = 8997388430,
+    wrench = 7743878358,
+    settings = 7734053495,
+    shield = 7734056608,
+}
 
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-SaveManager:IgnoreThemeSettings()
-InterfaceManager:SetFolder("MM2Enhanced")
-SaveManager:SetFolder("MM2Enhanced")
-
--- Compatibility layer keeps the existing feature callbacks intact while
--- translating the old menu calls to Fluent components.
-local flagValues = {}
-local loadingConfig = false
-local saveQueued = false
-local DEFAULT_CONFIG_NAME = "MM2Enhanced"
-
-local function queueAutoSave()
-    if scriptUnloaded or loadingConfig or saveQueued then
-        return
+local function resolveIcon(icon)
+    if icon == nil or icon == "" or icon == 0 then
+        return nil
     end
-    saveQueued = true
-    task.delay(0.4, function()
-        saveQueued = false
-        if loadingConfig then
-            return
+    if type(icon) == "number" then
+        return icon
+    end
+    if type(icon) == "string" then
+        if string.find(icon, "rbxasset", 1, true) or tonumber(icon) then
+            return tonumber(icon) or icon
         end
-        pcall(function()
-            SaveManager:Save(DEFAULT_CONFIG_NAME)
-        end)
-        pcall(function()
-            if writefile then
-                writefile(SaveManager.Folder .. "/settings/autoload.txt", DEFAULT_CONFIG_NAME)
-            end
-        end)
-    end)
+        return TAB_ICONS[icon] or TAB_ICONS[string.lower(icon)]
+    end
+    return icon
 end
 
+local window = Rayfield:CreateWindow({
+    name = "MM2 Enhanced",
+    subtitle = "MM2 utility suite",
+    icon = TAB_ICONS.shield,
+    theme = "cobalt",
+    showName = "MM2",
+    configuration = {
+        autoSave = true,
+        autoLoad = true,
+        fileName = "MM2Enhanced",
+        customFolder = "MM2Enhanced",
+    },
+})
+
+local flagValues = {}
+local loadingConfig = false
+
+local nativeCreateTab = window.CreateTab
+local nativeNotify = window.Notify
+local nativeToast = window.Toast
+local nativeGet = window.Get
+
 function window:Get(name)
-    local option = Fluent.Options and Fluent.Options[name]
-    if option and option.Value ~= nil then
-        return option.Value
+    if nativeGet then
+        local ok, value = pcall(nativeGet, self, name)
+        if ok and value ~= nil then
+            return value
+        end
+    end
+    if self.Flags and self.Flags[name] ~= nil then
+        return self.Flags[name]
     end
     return flagValues[name]
 end
 
 function window:Notify(data)
-    return Fluent:Notify({
-        Title = data.title or data.Title or "MM2 Enhanced",
-        Content = data.content or data.Content or data.subtitle or "",
-        Duration = data.duration or data.Duration or 3,
+    return nativeNotify(self, {
+        title = data.title or data.Title or "MM2 Enhanced",
+        content = data.content or data.Content or data.subtitle or "",
+        duration = data.duration or data.Duration or 3,
     })
 end
 
-window.Toast = window.Notify
-
-function window:ChangeTheme(theme)
-    pcall(function()
-        if self.SetTheme then
-            self:SetTheme(theme)
-        elseif Fluent.SetTheme then
-            Fluent:SetTheme(theme)
-        end
-    end)
-end
-
-function window:ToggleHide()
-    pcall(function()
-        if self.Minimize then
-            self:Minimize()
-        elseif Fluent.Toggle then
-            Fluent:Toggle()
-        end
-    end)
-end
-
-function window:Save()
-    local ok, result = pcall(function()
-        return SaveManager:Save(DEFAULT_CONFIG_NAME)
-    end)
-    return ok and result ~= false
-end
-
-function window:Load()
-    loadingConfig = true
-    local ok, result = pcall(function()
-        return SaveManager:Load(DEFAULT_CONFIG_NAME)
-    end)
-    task.delay(0.2, function()
-        loadingConfig = false
-    end)
-    return ok and result ~= false
-end
-
-function window:Unload()
-    pcall(function()
-        Fluent.Unloaded = true
-    end)
-    pcall(function()
-        if type(Fluent.Destroy) == "function" then
-            Fluent:Destroy()
-        end
-    end)
-    pcall(function()
-        if self.Destroy then
-            self:Destroy()
-        end
-    end)
-    pcall(function()
-        if self.Root and self.Root.Destroy then
-            self.Root:Destroy()
-        end
-    end)
-    pcall(function()
-        if Fluent.GUI then
-            Fluent.GUI:Destroy()
-        end
-    end)
-    pcall(function()
-        if Fluent.ScreenGui then
-            Fluent.ScreenGui:Destroy()
-        end
-    end)
-end
-
-local function normalizeValue(value, fallback)
-    if type(value) == "table" then
-        if value[1] then
-            return value[1]
-        end
-        for key, enabled in pairs(value) do
-            if enabled == true and type(key) == "string" then
-                return key
-            end
-        end
-        return fallback
-    end
-    return value == nil and fallback or value
-end
-
-local function sliderRounding(increment)
-    increment = tonumber(increment) or 1
-    if increment >= 1 then
-        return 0
-    end
-    local decimals = tostring(increment):match("%.(%d+)")
-    return decimals and #decimals or 1
-end
-
-local function bindFlag(flag, value)
-    if flag then
-        flagValues[flag] = value
-    end
+function window:Toast(data)
+    return nativeToast(self, {
+        title = data.title or data.Title or "MM2 Enhanced",
+        content = data.content or data.Content or data.subtitle or "",
+        duration = data.duration or data.Duration or 3,
+    })
 end
 
 function window:CreateTab(config)
-    local tab = self:AddTab({
-        Title = config.name or config.Name,
-        Icon = config.icon or config.Icon or "",
+    return nativeCreateTab(self, {
+        name = config.name or config.Name,
+        icon = resolveIcon(config.icon or config.Icon),
     })
-
-    function tab:CreateSection(section)
-        return self:AddSection(section.name or section.Name)
-    end
-
-    function tab:CreateToggle(element)
-        local flag = element.flag or element.name
-        bindFlag(flag, element.value)
-        return self:AddToggle(flag, {
-            Title = element.name,
-            Description = element.description,
-            Default = element.value == true,
-            Callback = function(value)
-                bindFlag(flag, value)
-                if element.callback then element.callback(value) end
-                queueAutoSave()
-            end,
-        })
-    end
-
-    function tab:CreateSlider(element)
-        local flag = element.flag or element.name
-        bindFlag(flag, element.value)
-        return self:AddSlider(flag, {
-            Title = element.name,
-            Description = element.description,
-            Default = element.value,
-            Min = element.range[1],
-            Max = element.range[2],
-            Rounding = sliderRounding(element.increment),
-            Callback = function(value)
-                bindFlag(flag, value)
-                if element.callback then element.callback(value) end
-                queueAutoSave()
-            end,
-        })
-    end
-
-    function tab:CreateDropdown(element)
-        local flag = element.flag or element.name
-        local current = normalizeValue(element.value, element.options[1])
-        bindFlag(flag, current)
-        return self:AddDropdown(flag, {
-            Title = element.name,
-            Description = element.description,
-            Values = element.options,
-            Multi = element.multiSelect == true,
-            Default = current,
-            Callback = function(value)
-                local normalized = normalizeValue(value, element.options[1])
-                bindFlag(flag, normalized)
-                if element.callback then element.callback(value) end
-                queueAutoSave()
-            end,
-        })
-    end
-
-    function tab:CreateInput(element)
-        local flag = element.flag or element.name
-        bindFlag(flag, element.value or "")
-        return self:AddInput(flag, {
-            Title = element.name,
-            Description = element.description,
-            Default = element.value or "",
-            Placeholder = element.placeholder,
-            Callback = function(value)
-                bindFlag(flag, value)
-                if element.callback then element.callback(value) end
-                queueAutoSave()
-            end,
-        })
-    end
-
-    function tab:CreateKeybind(element)
-        local flag = element.flag or element.name
-        bindFlag(flag, element.value)
-        local keyValue = element.value
-        if typeof(keyValue) == "EnumItem" then
-            keyValue = keyValue.Name
-        end
-        return self:AddKeybind(flag, {
-            Title = element.name,
-            Description = element.description,
-            Mode = element.hold and "Hold" or "Toggle",
-            Default = keyValue,
-            Callback = function()
-                if element.callback then element.callback() end
-            end,
-            ChangedCallback = function(newKey)
-                bindFlag(flag, newKey)
-                queueAutoSave()
-            end,
-        })
-    end
-
-    function tab:CreateButton(element)
-        return self:AddButton({
-            Title = element.name,
-            Description = element.description,
-            Callback = element.callback,
-        })
-    end
-
-    function tab:CreateStat(element)
-        local paragraph = self:AddParagraph({
-            Title = element.name,
-            Content = tostring(element.value or "") .. (element.suffix or ""),
-        })
-        return {
-            Set = function(_, value)
-                local text = tostring(value) .. (element.suffix or "")
-                if paragraph then
-                    if paragraph.SetDesc then
-                        paragraph:SetDesc(text)
-                    elseif paragraph.SetValue then
-                        paragraph:SetValue(text)
-                    end
-                end
-            end,
-        }
-    end
-
-    return tab
 end
 
 -- ============================
@@ -506,6 +297,7 @@ local function sweepScriptGuis()
         "MM2RoundHUD",
         "MM2EnhancedESP",
         "Fluent",
+        "Rayfield",
         "MM2 Enhanced",
         "MM2Enhanced",
     }
@@ -518,6 +310,7 @@ local function sweepScriptGuis()
                 local n = child.Name
                 if child:IsA("ScreenGui") or child:IsA("Folder") then
                     if string.find(n, "Fluent", 1, true)
+                        or string.find(n, "Rayfield", 1, true)
                         or string.find(n, "MM2 Enhanced", 1, true)
                         or string.find(n, "MM2Enhanced", 1, true)
                     then
@@ -4307,10 +4100,22 @@ miscTab:CreateButton({
 -- ============================
 -- SETTINGS TAB
 -- ============================
-pcall(function()
-    InterfaceManager:BuildInterfaceSection(settingsTab)
-    SaveManager:BuildConfigSection(settingsTab)
-end)
+settingsTab:CreateSection({ name = "Appearance" })
+
+settingsTab:CreateDropdown({
+    name = "Theme",
+    options = { "default", "cobalt", "ember", "amethyst", "frost", "rose" },
+    value = "cobalt",
+    flag = "UITheme",
+    callback = function(selected)
+        if type(selected) == "table" then
+            selected = selected[1]
+        end
+        if selected then
+            window:ChangeTheme(selected)
+        end
+    end,
+})
 
 settingsTab:CreateSection({ name = "Window" })
 
@@ -4353,30 +4158,12 @@ settingsTab:CreateStat({
 -- ============================
 
 pcall(function()
-    window:SelectTab(1)
-end)
-
-loadingConfig = true
-pcall(function()
-    if typeof(isfile) == "function" and isfile(SaveManager.Folder .. "/settings/" .. DEFAULT_CONFIG_NAME .. ".json") then
-        SaveManager:Load(DEFAULT_CONFIG_NAME)
-    else
-        SaveManager:LoadAutoloadConfig()
-    end
-end)
-task.delay(0.35, function()
-    loadingConfig = false
-    pcall(function()
-        SaveManager:Save(DEFAULT_CONFIG_NAME)
-        if writefile then
-            writefile(SaveManager.Folder .. "/settings/autoload.txt", DEFAULT_CONFIG_NAME)
-        end
-    end)
+    window:Navigate("Movement")
 end)
 
 window:Notify({
     title = "MM2 Enhanced is ready",
-    content = "Fluent UI. Settings auto-save. Q = hide menu.",
+    content = "Rayfield Gen2. Config auto-saves. Hide the menu from Settings.",
     duration = 5,
 })
 
