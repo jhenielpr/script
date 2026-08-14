@@ -124,101 +124,17 @@ local function getHiddenUi()
     return nil
 end
 
-local function protectAndMoveGui(gui, parent)
-    if not gui then
-        return
-    end
-    if protectgui then
-        pcall(protectgui, gui)
-    end
-    if parent and gui.Parent ~= parent then
-        pcall(function()
-            gui.Parent = parent
-        end)
-    end
-end
-
-local function isInjectedCoreGui(name)
-    if type(name) ~= "string" then
-        return false
-    end
-    if string.find(name, "Rayfield", 1, true) or string.find(name, "MM2", 1, true) then
-        return true
-    end
-    return string.match(name, "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
-end
-
-local function adoptInjectedGuis()
-    local parent = getHiddenUi()
-    local ok, core = pcall(function()
-        return cloneref(game:GetService("CoreGui"))
-    end)
-    if not ok or not core or not parent or parent == core then
-        return
-    end
-    for _, child in ipairs(core:GetChildren()) do
-        if (child:IsA("ScreenGui") or child:IsA("Folder") or child:IsA("LayerCollector")) and isInjectedCoreGui(child.Name) then
-            protectAndMoveGui(child, parent)
-        end
-    end
-end
-
 getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
-
 -- ============================
--- RAYFIELD GEN2
+-- RAYFIELD GEN2 (same CreateWindow style as the working v4.4 UI)
 -- ============================
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 
--- Lucide names (WindUI/Fluent) -> Roblox asset ids (Rayfield Gen2).
--- scan-eye / sparkles are not in the older Lucide pack, so they map to eye / star.
-local TAB_ICONS = {
-    move = 7743870731,
-    swords = 7743872758, -- target (no swords asset in this pack)
-    coins = 7743866529,
-    ["scan-eye"] = 7733774602, -- eye
-    eye = 7733774602,
-    scan = 8997386861,
-    users = 7743876054,
-    map = 7733992789,
-    sparkles = 7734068321, -- star
-    star = 7734068321,
-    wand = 8997388430,
-    wrench = 7743878358,
-    settings = 7734053495,
-    shield = 7734056608,
-    home = 7733960981,
-    ["layout-dashboard"] = 7733970318,
-    activity = 7733655755,
-}
-
-local function resolveIcon(icon)
-    if icon == nil or icon == "" or icon == 0 then
-        return nil
-    end
-    if type(icon) == "number" then
-        return icon
-    end
-    if type(icon) == "string" then
-        if string.find(icon, "rbxasset", 1, true) or tonumber(icon) then
-            return tonumber(icon) or icon
-        end
-        return TAB_ICONS[icon] or TAB_ICONS[string.lower(icon)]
-    end
-    return icon
-end
-
 local window = Rayfield:CreateWindow({
     name = "MM2 Enhanced",
-    subtitle = "MM2 utility suite",
-    icon = TAB_ICONS.shield,
+    subtitle = "VEIL Edition v4.5",
     theme = "cobalt",
-    showName = "MM2",
-    locale = "en-us",
-    translator = function(text)
-        return text
-    end,
     configuration = {
         autoSave = true,
         autoLoad = true,
@@ -227,66 +143,8 @@ local window = Rayfield:CreateWindow({
     },
 })
 
-pcall(adoptInjectedGuis)
-task.defer(adoptInjectedGuis)
-pcall(function()
-    local core = cloneref(game:GetService("CoreGui"))
-    local conn
-    conn = core.ChildAdded:Connect(function(child)
-        if isInjectedCoreGui(child.Name) then
-            protectAndMoveGui(child, getHiddenUi())
-        end
-    end)
-    task.delay(8, function()
-        if conn then
-            conn:Disconnect()
-        end
-    end)
-end)
-
 local flagValues = {}
 local loadingConfig = false
-
-local nativeCreateTab = window.CreateTab
-local nativeNotify = window.Notify
-local nativeToast = window.Toast
-
-local function notifyPayload(data)
-    if type(data) ~= "table" then
-        return {
-            title = "MM2 Enhanced",
-            content = tostring(data or ""),
-            duration = 3,
-        }
-    end
-    return {
-        title = data.title or data.Title or "MM2 Enhanced",
-        content = data.content or data.Content or data.subtitle or "",
-        duration = data.duration or data.Duration or 3,
-    }
-end
-
-function window:Notify(data)
-    if type(nativeNotify) ~= "function" then
-        return
-    end
-    return nativeNotify(self, notifyPayload(data))
-end
-
-function window:Toast(data)
-    if type(nativeToast) ~= "function" then
-        return window:Notify(data)
-    end
-    return nativeToast(self, notifyPayload(data))
-end
-
-function window:CreateTab(config)
-    config = config or {}
-    return nativeCreateTab(self, {
-        name = config.name or config.Name,
-        icon = resolveIcon(config.icon or config.Icon),
-    })
-end
 
 -- ============================
 -- SETTINGS STATE
@@ -763,25 +621,19 @@ local function getFlag(name, fallback)
     if scriptUnloaded then
         return fallback
     end
-    local value
-    if window.Flags ~= nil then
-        local ok, flagged = pcall(function()
-            return window.Flags[name]
-        end)
-        if ok then
-            value = flagged
+    local ok, value = pcall(function()
+        return window:Get(name)
+    end)
+    if ok and value ~= nil then
+        if type(value) == "table" then
+            return value[1] or fallback
         end
+        return value
     end
-    if value == nil then
-        value = flagValues[name]
+    if flagValues[name] ~= nil then
+        return flagValues[name]
     end
-    if value == nil then
-        return fallback
-    end
-    if type(value) == "table" then
-        return value[1] or fallback
-    end
-    return value
+    return fallback
 end
 
 local function set3dRenderingEnabled(enabled)
@@ -2277,7 +2129,12 @@ local function getEspFolder()
     end
     espFolder = Instance.new("Folder")
     espFolder.Name = "MM2EnhancedESP"
-    protectAndMoveGui(espFolder, parent)
+    if protectgui then
+        pcall(protectgui, espFolder)
+    end
+    pcall(function()
+        espFolder.Parent = parent
+    end)
     return espFolder
 end
 
@@ -2994,12 +2851,12 @@ end)
 -- ============================
 -- TABS
 -- ============================
-local homeTab = window:CreateTab({ name = "Home", icon = "home" })
-local mainTab = window:CreateTab({ name = "Main", icon = "layout-dashboard" })
-local combatTab = window:CreateTab({ name = "Combat", icon = "swords" })
-local visualsTab = window:CreateTab({ name = "Visuals", icon = "eye" })
-local miscTab = window:CreateTab({ name = "Misc", icon = "wrench" })
-local settingsTab = window:CreateTab({ name = "Settings", icon = "settings" })
+local homeTab = window:CreateTab({ name = "Home", icon = 7733960981 })
+local mainTab = window:CreateTab({ name = "Main", icon = 7733970318 })
+local combatTab = window:CreateTab({ name = "Combat", icon = 7743872758 })
+local visualsTab = window:CreateTab({ name = "Visuals", icon = 7733774602 })
+local miscTab = window:CreateTab({ name = "Misc", icon = 7743878358 })
+local settingsTab = window:CreateTab({ name = "Settings", icon = 7734053495 })
 
 -- Keep old names as aliases so existing sections stay on the new tabs.
 local movementTab = mainTab
@@ -4485,7 +4342,43 @@ settingsTab:CreateDropdown({
     end,
 })
 
+settingsTab:CreateSection({ name = "Configuration" })
+
+settingsTab:CreateButton({
+    name = "Save Configuration",
+    callback = function()
+        local success = window:Save()
+        window:Notify({
+            title = success and "Saved" or "Save Failed",
+            content = success and "Configuration saved to disk." or "Could not save.",
+            duration = 4,
+        })
+    end,
+})
+
+settingsTab:CreateButton({
+    name = "Load Configuration",
+    callback = function()
+        window:Load()
+        window:Notify({
+            title = "Loaded",
+            content = "Configuration loaded from disk.",
+            duration = 4,
+        })
+    end,
+})
+
 settingsTab:CreateSection({ name = "Window" })
+
+settingsTab:CreateKeybind({
+    name = "Toggle Window",
+    value = Enum.KeyCode.Q,
+    hold = false,
+    flag = "ToggleKey",
+    callback = function()
+        window:ToggleHide()
+    end,
+})
 
 settingsTab:CreateButton({
     name = "Unload UI",
@@ -4530,8 +4423,8 @@ pcall(function()
 end)
 
 window:Notify({
-    title = "MM2 Enhanced is ready",
-    content = "Rayfield Gen2. Config auto-saves. Hide the menu from Settings.",
+    title = "MM2 Enhanced v4.5",
+    content = "Q toggles the UI. Config auto-saves.",
     duration = 5,
 })
 
