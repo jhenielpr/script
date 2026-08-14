@@ -1,8 +1,5 @@
 -- ============================================================
--- MM2 Enhanced — Rayfield Gen2
--- Line 1 must not call anything. Executors inject this file into
--- CoreGui; Roblox locale then "runs" line 1. A function *definition*
--- is fine. A call to a missing global is what printed "nil value".
+-- MM2 Enhanced — PPHUD
 -- ============================================================
 
 local Players = game:GetService("Players")
@@ -12,30 +9,186 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
+local PathfindingService = game:GetService("PathfindingService")
 local LocalPlayer = Players.LocalPlayer
 local Workspace = game:GetService("Workspace")
 
 getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
 -- ============================
--- RAYFIELD GEN2
+-- PPHUD (extended: Input, Keybind, Notify, Save/Load)
 -- ============================
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+local library = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/jhenielpr/script/main/pphud.lua"
+))()
 
-local window = Rayfield:CreateWindow({
-    name = "MM2 Enhanced",
-    subtitle = "VEIL Edition v4.5",
-    theme = "cobalt",
-    configuration = {
-        autoSave = true,
-        autoLoad = true,
-        fileName = "MM2Enhanced",
-        customFolder = "MM2Enhanced",
-    },
-})
+local rawWindow = library:Window({ Text = "MM2 Enhanced  v4.5" })
 
 local flagValues = {}
 local loadingConfig = false
+
+local window = {}
+
+function window:Get(name)
+    local value = library.Flags and library.Flags[name]
+    if value ~= nil then
+        return value
+    end
+    return flagValues[name]
+end
+
+function window:Notify(data)
+    return rawWindow:Notify(data)
+end
+
+window.Toast = window.Notify
+
+function window:Save()
+    return rawWindow:Save("MM2Enhanced")
+end
+
+function window:Load()
+    return rawWindow:Load("MM2Enhanced")
+end
+
+function window:Unload()
+    pcall(function()
+        rawWindow:Exit()
+    end)
+end
+
+function window:ToggleHide()
+    rawWindow:Toggle()
+end
+
+function window:ChangeTheme()
+end
+
+function window:Navigate()
+end
+
+function window:CreateTab(config)
+    local tab = rawWindow:Tab({ Text = config.name or config.Name or "Tab" })
+    local lastSection = nil
+    local useRight = false
+
+    local function currentSection()
+        if not lastSection then
+            lastSection = tab:Section({ Text = "General", Side = "Left" })
+        end
+        return lastSection
+    end
+
+    function tab:CreateSection(section)
+        useRight = not useRight
+        lastSection = tab:Section({
+            Text = section.name or section.Name or "Section",
+            Side = useRight and "Left" or "Right",
+        })
+        return lastSection
+    end
+
+    function tab:CreateToggle(element)
+        if element.flag then
+            flagValues[element.flag] = element.value == true
+        end
+        return currentSection():Check({
+            Text = element.name,
+            Flag = element.flag,
+            Default = element.value == true,
+            Callback = element.callback or function() end,
+        })
+    end
+
+    function tab:CreateSlider(element)
+        if element.flag then
+            flagValues[element.flag] = element.value
+            library.Flags[element.flag] = element.value
+        end
+        return currentSection():Slider({
+            Text = element.name,
+            Flag = element.flag,
+            Minimum = element.range and element.range[1] or 0,
+            Maximum = element.range and element.range[2] or 100,
+            Default = element.value or 0,
+            Incrementation = element.increment or 1,
+            Postfix = element.suffix or "",
+            Callback = element.callback or function() end,
+        })
+    end
+
+    function tab:CreateDropdown(element)
+        local current = element.value
+        if type(current) == "table" then
+            current = current[1]
+        end
+        if element.flag then
+            flagValues[element.flag] = current
+            library.Flags[element.flag] = current
+        end
+        local drop = currentSection():Dropdown({
+            Text = element.name,
+            Flag = element.flag,
+            List = element.options or {},
+            Default = current,
+            Multi = element.multiSelect == true,
+            Callback = function(value)
+                if element.flag then
+                    flagValues[element.flag] = value
+                    library.Flags[element.flag] = value
+                end
+                if element.callback then
+                    element.callback(value)
+                end
+            end,
+        })
+        return drop
+    end
+
+    function tab:CreateInput(element)
+        if element.flag then
+            flagValues[element.flag] = element.value or ""
+        end
+        return currentSection():Input({
+            Text = element.name,
+            Flag = element.flag,
+            Default = element.value or "",
+            Placeholder = element.placeholder or "",
+            Callback = element.callback or function() end,
+        })
+    end
+
+    function tab:CreateKeybind(element)
+        return currentSection():Keybind({
+            Text = element.name,
+            Flag = element.flag,
+            Default = element.value,
+            Callback = element.callback or function() end,
+        })
+    end
+
+    function tab:CreateButton(element)
+        return currentSection():Button({
+            Text = element.name,
+            Callback = element.callback or function() end,
+        })
+    end
+
+    function tab:CreateStat(element)
+        local label = currentSection():Label({
+            Text = (element.name or "Stat") .. ": " .. tostring(element.value or "") .. tostring(element.suffix or ""),
+        })
+        return {
+            Set = function(_, value)
+                if label and label.Set then
+                    label:Set((element.name or "Stat") .. ": " .. tostring(value) .. tostring(element.suffix or ""))
+                end
+            end,
+        }
+    end
+
+    return tab
+end
 
 local function pickFn(...)
     for i = 1, select("#", ...) do
@@ -78,6 +231,7 @@ local Settings = {
     AutoFling = false,
     AutoVote = false,
     VoteTarget = "Random",
+    AutofarmMode = "Fast",
 }
 
 local ROLE_COLORS = {
@@ -1809,6 +1963,82 @@ local function tweenToCoin(coin)
     return result == Enum.PlaybackState.Completed
 end
 
+local function walkToCoin(coin)
+    local character, humanoid, rootPart = getCharacterParts()
+    if not character or not humanoid or not rootPart or not isActiveCoin(coin) then
+        return false
+    end
+    if currentMode and currentMode ~= "coin" then
+        return false
+    end
+
+    currentMode = "coin"
+    currentTarget = coin
+
+    local destination = coin.Position + Vector3.new(0, 1.5, 0)
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        WaypointSpacing = 6,
+    })
+
+    local okCompute = pcall(function()
+        path:ComputeAsync(rootPart.Position, destination)
+    end)
+    if not okCompute or path.Status ~= Enum.PathStatus.Success then
+        currentMode = nil
+        currentTarget = nil
+        return tweenToCoin(coin)
+    end
+
+    local waypoints = path:GetWaypoints()
+    for i, waypoint in ipairs(waypoints) do
+        if not getFlag("AutoCoins", false) or not isActiveCoin(coin) then
+            break
+        end
+        if not humanoid.Parent or humanoid.Health <= 0 then
+            break
+        end
+        if waypoint.Action == Enum.PathWaypointAction.Jump then
+            humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+        humanoid:MoveTo(waypoint.Position)
+        local finished = false
+        local conn
+        conn = humanoid.MoveToFinished:Connect(function()
+            finished = true
+        end)
+        local deadline = os.clock() + 2.2
+        while not finished and os.clock() < deadline do
+            if not getFlag("AutoCoins", false) or not isActiveCoin(coin) then
+                break
+            end
+            if (rootPart.Position - coin.Position).Magnitude <= 4.5 then
+                finished = true
+                break
+            end
+            task.wait()
+        end
+        if conn then
+            conn:Disconnect()
+        end
+        if (rootPart.Position - coin.Position).Magnitude <= 4.5 then
+            break
+        end
+        if not finished and i == #waypoints then
+            currentMode = nil
+            currentTarget = nil
+            return tweenToCoin(coin)
+        end
+    end
+
+    currentMode = nil
+    currentTarget = nil
+    return isActiveCoin(coin) == false or (rootPart.Position - coin.Position).Magnitude <= 6
+end
+
 local function waitForCoinCollection(coin)
     local startTime = os.clock()
     while getFlag("AutoCoins", false) do
@@ -1866,7 +2096,16 @@ local function coinFarmLoop()
                 continue
             end
 
-            local reached = tweenToCoin(coin)
+            local mode = getFlag("AutofarmMode", Settings.AutofarmMode)
+            if type(mode) == "table" then
+                mode = mode[1]
+            end
+            local reached
+            if mode == "Legit" then
+                reached = walkToCoin(coin)
+            else
+                reached = tweenToCoin(coin)
+            end
             if reached and getFlag("AutoCoins", false) then
                 waitForCoinCollection(coin)
                 -- Use the actual slider delay value
@@ -3152,6 +3391,19 @@ espTab:CreateButton({
 -- ============================
 farmTab:CreateSection({ name = "Automation" })
 
+farmTab:CreateDropdown({
+    name = "Autofarm Mode",
+    options = { "Legit", "Fast" },
+    value = "Fast",
+    flag = "AutofarmMode",
+    callback = function(selected)
+        if type(selected) == "table" then
+            selected = selected[1]
+        end
+        Settings.AutofarmMode = selected or "Fast"
+    end,
+})
+
 farmTab:CreateToggle({
     name = "Auto Coin Farm",
     description = "Collect nearby coins automatically",
@@ -3179,6 +3431,19 @@ farmTab:CreateToggle({
     callback = function(enabled)
         getgenv().MM2EnhancedPersist.FarmNoRender = enabled == true
         applyFarmRendering()
+    end,
+})
+
+farmTab:CreateButton({
+    name = "Get Gun from Ground",
+    description = "Teleport to the dropped gun once",
+    callback = function()
+        collectGun()
+        window:Toast({
+            title = "Gun",
+            subtitle = "Tried to pick up the dropped gun",
+            duration = 2,
+        })
     end,
 })
 
