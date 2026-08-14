@@ -398,6 +398,14 @@ local function unloadScript()
    currentMode = nil
    aimbotEnabled = false
    aiming = false
+   pcall(function()
+      local state = getgenv().MM2SilentAimState
+      if state then
+         state.enabled = false
+         state.part = nil
+         state.position = nil
+      end
+   end)
 
    pcall(function()
       for key, value in pairs(flagValues) do
@@ -1650,7 +1658,7 @@ local function matchesAimbotTarget(player)
     if mode == "Target" then
         local wanted = tostring(aimbotTargetName or getFlag("AimbotTargetInput", "") or selectedPlayerName or "")
         if wanted == "" then
-            return false
+            return true
         end
         wanted = string.lower(wanted)
         local name = string.lower(player.Name)
@@ -1768,26 +1776,186 @@ local function getClosestPlayer()
     return closest
 end
 
-local function moveSilentTo(screenPos)
-    local mousePos = UserInputService:GetMouseLocation()
-    local dx = screenPos.X - mousePos.X
-    local dy = screenPos.Y - mousePos.Y
-    if type(mousemoverel) == "function" then
-        pcall(mousemoverel, dx * 0.45, dy * 0.45)
-        return true
-    end
-    return false
+local silentState = getgenv().MM2SilentAimState
+if type(silentState) ~= "table" then
+    silentState = {
+        enabled = false,
+        part = nil,
+        position = nil,
+    }
+    getgenv().MM2SilentAimState = silentState
 end
+
+local function setSilentTarget(part)
+    if scriptUnloaded then
+        silentState.enabled = false
+        silentState.part = nil
+        silentState.position = nil
+        return
+    end
+    local pos = part and getPredictedPosition(part) or nil
+    silentState.enabled = getFlag("SilentAim", false) and part ~= nil and pos ~= nil
+    silentState.part = silentState.enabled and part or nil
+    silentState.position = silentState.enabled and pos or nil
+end
+
+local function installSilentAimHooks()
+    if getgenv().MM2SilentAimHooked then
+        return
+    end
+
+    local hookMeta = pickFn(hookmetamethod, hook_metamethod)
+    local wrap = pickFn(newcclosure, new_cclosure) or function(fn)
+        return fn
+    end
+    local isCaller = pickFn(checkcaller, check_caller)
+    local getMethod = pickFn(getnamecallmethod, get_namecall_method)
+
+    local mouse = LocalPlayer:GetMouse()
+    local function spoofActive()
+        local state = getgenv().MM2SilentAimState
+        return state
+            and state.enabled
+            and state.part
+            and state.part.Parent
+            and state.position
+            and not (isCaller and isCaller())
+    end
+
+    local function spoofHit()
+        return CFrame.new(getgenv().MM2SilentAimState.position)
+    end
+
+    local function spoofDir(origin)
+        local dest = getgenv().MM2SilentAimState.position
+        if not origin or not dest then
+            return nil
+        end
+        local delta = dest - origin
+        if delta.Magnitude < 0.05 then
+            return nil
+        end
+        return delta.Unit
+    end
+
+    local function fromLocal(origin)
+        if typeof(origin) ~= "Vector3" then
+            return false
+        end
+        local camera = Workspace.CurrentCamera
+        if camera and (origin - camera.CFrame.Position).Magnitude < 10 then
+            return true
+        end
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root and (origin - root.Position).Magnitude < 14 then
+            return true
+        end
+        return false
+    end
+
+    if hookMeta then
+        local oldIndex
+        oldIndex = hookMeta(game, "__index", wrap(function(self, key)
+            if spoofActive() and self == mouse then
+                if key == "Hit" or key == "hit" then
+                    return spoofHit()
+                end
+                if key == "Target" or key == "target" then
+                    return getgenv().MM2SilentAimState.part
+                end
+                if key == "UnitRay" or key == "unitRay" then
+                    local camera = Workspace.CurrentCamera
+                    local origin = camera and camera.CFrame.Position or Vector3.zero
+                    local dir = spoofDir(origin)
+                    if dir then
+                        return Ray.new(origin, dir * 2000)
+                    end
+                end
+            end
+            return oldIndex(self, key)
+        end))
+
+        if getMethod then
+            local oldNamecall
+            oldNamecall = hookMeta(game, "__namecall", wrap(function(self, ...)
+                local method = getMethod()
+                if spoofActive() then
+                    if (method == "ScreenPointToRay" or method == "ViewportPointToRay") and self == Workspace.CurrentCamera then
+                        local origin = self.CFrame.Position
+                        local dir = spoofDir(origin)
+                        if dir then
+                            return Ray.new(origin, dir)
+                        end
+                    end
+                    if method == "Raycast" and self == Workspace then
+                        local origin, direction = ...
+                        if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" and fromLocal(origin) then
+                            local dir = spoofDir(origin)
+                            if dir then
+                                return oldNamecall(self, origin, dir * math.max(direction.Magnitude, 1), select(3, ...))
+                            end
+                        end
+                    end
+                    if (method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRayWithWhitelist") and self == Workspace then
+                        local ray = ...
+                        if typeof(ray) == "Ray" and fromLocal(ray.Origin) then
+                            local dir = spoofDir(ray.Origin)
+                            if dir then
+                                local newRay = Ray.new(ray.Origin, dir * math.max(ray.Direction.Magnitude, 1))
+                                return oldNamecall(self, newRay, select(2, ...))
+                            end
+                        end
+                    end
+                end
+                return oldNamecall(self, ...)
+            end))
+        end
+
+        getgenv().MM2SilentAimHooked = true
+        return
+    end
+
+    local getMt = pickFn(getrawmetatable, get_raw_metatable)
+    local setRo = pickFn(setreadonly, set_readonly)
+    if getMt then
+        local mt = getMt(game)
+        if mt and mt.__index then
+            if setRo then
+                pcall(setRo, mt, false)
+            end
+            local oldIndex = mt.__index
+            mt.__index = wrap(function(self, key)
+                if spoofActive() and self == mouse then
+                    if key == "Hit" or key == "hit" then
+                        return spoofHit()
+                    end
+                    if key == "Target" or key == "target" then
+                        return getgenv().MM2SilentAimState.part
+                    end
+                end
+                return oldIndex(self, key)
+            end)
+            if setRo then
+                pcall(setRo, mt, true)
+            end
+            getgenv().MM2SilentAimHooked = true
+        end
+    end
+end
+
+installSilentAimHooks()
 
 trackConnection(RunService.RenderStepped:Connect(function()
     if scriptUnloaded then
+        setSilentTarget(nil)
         destroyFovCircle()
         return
     end
 
     local camera = Workspace.CurrentCamera
-    local enabled = getFlag("EnableAimbot", true)
-    local showFov = getFlag("AimbotFOVCircle", true) and enabled
+    local aimbotOn = getFlag("EnableAimbot", true) and aimbotEnabled
+    local silentOn = getFlag("SilentAim", false)
+    local showFov = getFlag("AimbotFOVCircle", true) and (aimbotOn or silentOn)
     local fov = tonumber(getFlag("AimbotFOV", 150)) or 150
     if showFov then
         local circle = ensureFovCircle()
@@ -1802,12 +1970,17 @@ trackConnection(RunService.RenderStepped:Connect(function()
     end
 
     local target = nil
-    if enabled then
+    if aimbotOn or silentOn then
         target = getClosestPlayer()
+    end
+    if silentOn then
+        setSilentTarget(target)
+    else
+        setSilentTarget(nil)
     end
 
     local predicted = target and getPredictedPosition(target)
-    local showBox = getFlag("AimbotPredictBox", false) and enabled and predicted and camera
+    local showBox = getFlag("AimbotPredictBox", false) and (aimbotOn or silentOn) and predicted and camera
     if showBox then
         local box = ensurePredictBox()
         local screen, onScreen = camera:WorldToViewportPoint(predicted)
@@ -1823,16 +1996,7 @@ trackConnection(RunService.RenderStepped:Connect(function()
         predictBox.Visible = false
     end
 
-    if not aimbotEnabled or not aiming or not target or not camera or not predicted then
-        return
-    end
-
-    local silent = getFlag("SilentAim", false)
-    local screen, onScreen = camera:WorldToViewportPoint(predicted)
-    if silent and onScreen then
-        if not moveSilentTo(screen) then
-            camera.CFrame = CFrame.new(camera.CFrame.Position, predicted)
-        end
+    if not aimbotOn or not aiming or not target or not camera or not predicted then
         return
     end
 
@@ -3417,7 +3581,7 @@ combatTab:CreateDropdown({
 
 combatTab:CreateToggle({
     name = "Silent Aim",
-    description = "Move mouse to the target instead of locking the camera",
+    description = "Redirects shots to the target. Works without the aim key or Enable Aimbot",
     value = false,
     flag = "SilentAim",
     callback = function() end,
