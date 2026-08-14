@@ -1,3 +1,4 @@
+-- MM2 Enhanced
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -14,9 +15,15 @@ getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 -- ============================
 -- PPHUD (extended: Input, Keybind, Notify, Save/Load)
 -- ============================
-local library = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/jhenielpr/script/main/pphud.lua"
-))()
+local pphudSource = game:HttpGet("https://raw.githubusercontent.com/jhenielpr/script/main/pphud.lua")
+local pphudChunk = loadstring(pphudSource)
+if type(pphudChunk) ~= "function" then
+    error("[MM2 Enhanced] PPHUD failed to compile. Update pphud.lua.", 0)
+end
+local library = pphudChunk()
+if type(library) ~= "table" or type(library.Window) ~= "function" then
+    error("[MM2 Enhanced] PPHUD did not return a library table.", 0)
+end
 
 local rawWindow = library:Window({ Text = "MM2 Enhanced  v4.5" })
 
@@ -3156,6 +3163,7 @@ end)
 
 end -- feature scope (keeps the chunk under Luau's 200-local limit)
 
+do -- ui scope
 -- ============================
 -- TABS
 -- ============================
@@ -4862,3 +4870,4 @@ if #missingOptional > 0 then
         duration = 8,
     })
 end
+end -- ui scope
