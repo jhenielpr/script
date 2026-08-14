@@ -1483,18 +1483,26 @@ local aiming = false
 local aimbotEnabled = true
 local aimbotTargetName = ""
 local fovCircle = nil
+local predictBox = nil
+
+local function destroyDrawing(obj)
+    if not obj then
+        return
+    end
+    pcall(function()
+        if obj.Remove then
+            obj:Remove()
+        elseif obj.Destroy then
+            obj:Destroy()
+        end
+    end)
+end
 
 destroyFovCircle = function()
-    if fovCircle then
-        pcall(function()
-            if fovCircle.Remove then
-                fovCircle:Remove()
-            elseif fovCircle.Destroy then
-                fovCircle:Destroy()
-            end
-        end)
-        fovCircle = nil
-    end
+    destroyDrawing(fovCircle)
+    fovCircle = nil
+    destroyDrawing(predictBox)
+    predictBox = nil
 end
 
 local function ensureFovCircle()
@@ -1515,6 +1523,55 @@ local function ensureFovCircle()
         end
     end
     return nil
+end
+
+local function ensurePredictBox()
+    if predictBox then
+        return predictBox
+    end
+    if type(Drawing) == "table" and Drawing.new then
+        local ok, box = pcall(Drawing.new, "Square")
+        if ok and box then
+            box.Filled = false
+            box.Thickness = 2
+            box.Color = Color3.fromRGB(255, 40, 40)
+            box.Size = Vector2.new(16, 16)
+            box.Visible = false
+            predictBox = box
+            return predictBox
+        end
+    end
+    return nil
+end
+
+local function getPredictedPosition(part)
+    if not part then
+        return nil
+    end
+    local method = getFlag("AimbotPredictMethod", "Velocity")
+    if type(method) == "table" then
+        method = method[1] or "Velocity"
+    end
+    local strength = tonumber(getFlag("AimbotPredict", 0.12)) or 0.12
+    if method == "None" or strength <= 0 then
+        return part.Position
+    end
+    local vel = Vector3.zero
+    pcall(function()
+        vel = part.AssemblyLinearVelocity or part.Velocity or Vector3.zero
+    end)
+    local camera = Workspace.CurrentCamera
+    local dist = 0
+    if camera then
+        dist = (part.Position - camera.CFrame.Position).Magnitude
+    end
+    if method == "Distance" then
+        return part.Position + vel * (dist / 280) * strength
+    end
+    if method == "Hybrid" then
+        return part.Position + vel * (0.04 + dist / 420) * math.max(strength, 0.05)
+    end
+    return part.Position + vel * strength
 end
 
 local function hasWallBetween(origin, part)
@@ -1590,6 +1647,7 @@ local function getClosestPlayer()
 
     local mousePos = UserInputService:GetMouseLocation()
     local fov = tonumber(getFlag("AimbotFOV", 150)) or 150
+    local useFov = getFlag("AimbotUseFOV", true)
     local targetPartName = getFlag("AimbotTargetPart", "Head") or "Head"
     if type(targetPartName) == "table" then
         targetPartName = targetPartName[1] or "Head"
@@ -1603,10 +1661,11 @@ local function getClosestPlayer()
             local hum = player.Character:FindFirstChildWhichIsA("Humanoid")
             if targetPart and hum and hum.Health > 0 then
                 if not wallCheck or not hasWallBetween(camera.CFrame.Position, targetPart) then
-                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                    local aimPos = getPredictedPosition(targetPart)
+                    local screenPos, onScreen = camera:WorldToViewportPoint(aimPos)
                     if onScreen then
                         local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                        if dist < shortestDist and dist <= fov then
+                        if dist < shortestDist and (not useFov or dist <= fov) then
                             shortestDist = dist
                             closest = targetPart
                         end
@@ -1618,6 +1677,17 @@ local function getClosestPlayer()
     return closest
 end
 
+local function moveSilentTo(screenPos)
+    local mousePos = UserInputService:GetMouseLocation()
+    local dx = screenPos.X - mousePos.X
+    local dy = screenPos.Y - mousePos.Y
+    if type(mousemoverel) == "function" then
+        pcall(mousemoverel, dx * 0.45, dy * 0.45)
+        return true
+    end
+    return false
+end
+
 trackConnection(RunService.RenderStepped:Connect(function()
     if scriptUnloaded then
         destroyFovCircle()
@@ -1625,7 +1695,8 @@ trackConnection(RunService.RenderStepped:Connect(function()
     end
 
     local camera = Workspace.CurrentCamera
-    local showFov = getFlag("AimbotFOVCircle", true) and getFlag("EnableAimbot", true)
+    local enabled = getFlag("EnableAimbot", true)
+    local showFov = getFlag("AimbotFOVCircle", true) and enabled
     local fov = tonumber(getFlag("AimbotFOV", 150)) or 150
     if showFov then
         local circle = ensureFovCircle()
@@ -1639,15 +1710,42 @@ trackConnection(RunService.RenderStepped:Connect(function()
         fovCircle.Visible = false
     end
 
-    if not aimbotEnabled or not aiming then
-        return
+    local target = nil
+    if enabled then
+        target = getClosestPlayer()
     end
-    local target = getClosestPlayer()
-    if not target or not camera then
+
+    local predicted = target and getPredictedPosition(target)
+    local showBox = getFlag("AimbotPredictBox", false) and enabled and predicted and camera
+    if showBox then
+        local box = ensurePredictBox()
+        local screen, onScreen = camera:WorldToViewportPoint(predicted)
+        if box then
+            if onScreen and screen.Z > 0 then
+                box.Position = Vector2.new(screen.X - 8, screen.Y - 8)
+                box.Visible = true
+            else
+                box.Visible = false
+            end
+        end
+    elseif predictBox then
+        predictBox.Visible = false
+    end
+
+    if not aimbotEnabled or not aiming or not target or not camera or not predicted then
         return
     end
 
-    local goalCFrame = CFrame.new(camera.CFrame.Position, target.Position)
+    local silent = getFlag("SilentAim", false)
+    local screen, onScreen = camera:WorldToViewportPoint(predicted)
+    if silent and onScreen then
+        if not moveSilentTo(screen) then
+            camera.CFrame = CFrame.new(camera.CFrame.Position, predicted)
+        end
+        return
+    end
+
+    local goalCFrame = CFrame.new(camera.CFrame.Position, predicted)
     local smoothness = tonumber(getFlag("AimbotSmoothing", 0)) or 0
     if smoothness <= 0 then
         camera.CFrame = goalCFrame
@@ -3150,6 +3248,22 @@ combatTab:CreateDropdown({
 })
 
 combatTab:CreateToggle({
+    name = "Silent Aim",
+    description = "Move mouse to the target instead of locking the camera",
+    value = false,
+    flag = "SilentAim",
+    callback = function() end,
+})
+
+combatTab:CreateToggle({
+    name = "Use FOV",
+    description = "Only lock targets inside the FOV circle (off = anywhere on screen)",
+    value = true,
+    flag = "AimbotUseFOV",
+    callback = function() end,
+})
+
+combatTab:CreateToggle({
     name = "Wall Check",
     description = "Do not lock onto people behind walls",
     value = true,
@@ -3165,6 +3279,36 @@ combatTab:CreateToggle({
     callback = function(enabled)
         if not enabled then
             destroyFovCircle()
+        end
+    end,
+})
+
+combatTab:CreateDropdown({
+    name = "Prediction",
+    options = { "None", "Velocity", "Distance", "Hybrid" },
+    value = "Velocity",
+    flag = "AimbotPredictMethod",
+    callback = function() end,
+})
+
+combatTab:CreateSlider({
+    name = "Predict Amount",
+    range = { 0, 0.5 },
+    increment = 0.01,
+    value = 0.12,
+    suffix = " s",
+    flag = "AimbotPredict",
+    callback = function() end,
+})
+
+combatTab:CreateToggle({
+    name = "Predict Box",
+    description = "Red box at the predicted aim point",
+    value = false,
+    flag = "AimbotPredictBox",
+    callback = function(enabled)
+        if not enabled and predictBox then
+            predictBox.Visible = false
         end
     end,
 })
