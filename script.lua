@@ -109,6 +109,9 @@ local TAB_ICONS = {
     wrench = 7743878358,
     settings = 7734053495,
     shield = 7734056608,
+    home = 7733960981,
+    ["layout-dashboard"] = 7733970318,
+    activity = 7733655755,
 }
 
 local function resolveIcon(icon)
@@ -264,7 +267,7 @@ local scriptUnloaded = false
 -- Forward declarations used by unloadScript.
 local disableInvisible, disableNoclip, disableAntifling
 local clearCoinContainerHooks, invalidateMapCache
-local removeVisuals, removeCoinESP, removeGunESP, destroyEspFolder
+local removeVisuals, removeCoinESP, removeGunESP, destroyEspFolder, destroyFovCircle
 local cachedCoins, cachedVotePads, coinVisuals, gunDropVisuals
 local infectionActive, infectionConn
 local destroyRoundHud
@@ -477,6 +480,7 @@ local function unloadScript()
    pcall(function()
       RunService:Set3dRenderingEnabled(true)
    end)
+   pcall(destroyFovCircle)
 
    -- Unload UI and leftover ScreenGuis
    pcall(function() window:Unload() end)
@@ -540,6 +544,78 @@ local function getRole(player)
     if hasTool(player, "Knife") then return "Murderer" end
     if hasTool(player, "Gun") then return "Sheriff" end
     return "Innocent"
+end
+
+local function isSpectator(player)
+    if not player then
+        return true
+    end
+
+    local attrAlive = player:GetAttribute("Alive")
+    if attrAlive == false then
+        return true
+    end
+
+    local character = player.Character
+    if not character or not character.Parent then
+        return true
+    end
+
+    local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        return true
+    end
+    local okState, state = pcall(function()
+        return humanoid:GetState()
+    end)
+    if okState and state == Enum.HumanoidStateType.Dead then
+        return true
+    end
+
+    local lobby = Workspace:FindFirstChild("Lobby")
+    if lobby and character:IsDescendantOf(lobby) then
+        return true
+    end
+
+    -- Mid-round: people standing in the lobby are spectators even if Alive is stale.
+    local map = cachedMap
+    if not (map and map.Parent) then
+        for _, object in ipairs(Workspace:GetChildren()) do
+            if object:IsA("Model") and object:GetAttribute("MapID") ~= nil then
+                map = object
+                break
+            end
+        end
+    end
+    if map and lobby then
+        local root = getRoot(character)
+        if root then
+            if root:IsDescendantOf(lobby) then
+                return true
+            end
+            local ok, cf, size = pcall(function()
+                return lobby:GetBoundingBox()
+            end)
+            if ok and cf and size then
+                local localPos = cf:PointToObjectSpace(root.Position)
+                if math.abs(localPos.X) <= size.X * 0.5
+                    and math.abs(localPos.Y) <= size.Y * 0.5
+                    and math.abs(localPos.Z) <= size.Z * 0.5
+                then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function getEspRole(player)
+    if isSpectator(player) then
+        return "Spectator"
+    end
+    return getRole(player)
 end
 
 local function isLocalPlayerAlive()
@@ -1366,6 +1442,93 @@ end
 -- ============================
 local aiming = false
 local aimbotEnabled = true
+local aimbotTargetName = ""
+local fovCircle = nil
+
+destroyFovCircle = function()
+    if fovCircle then
+        pcall(function()
+            if fovCircle.Remove then
+                fovCircle:Remove()
+            elseif fovCircle.Destroy then
+                fovCircle:Destroy()
+            end
+        end)
+        fovCircle = nil
+    end
+end
+
+local function ensureFovCircle()
+    if fovCircle then
+        return fovCircle
+    end
+    if type(Drawing) == "table" and Drawing.new then
+        local ok, circle = pcall(Drawing.new, "Circle")
+        if ok and circle then
+            circle.Filled = false
+            circle.Thickness = 1.5
+            circle.NumSides = 64
+            circle.Color = Color3.fromRGB(120, 190, 255)
+            circle.Transparency = 1
+            circle.Visible = false
+            fovCircle = circle
+            return fovCircle
+        end
+    end
+    return nil
+end
+
+local function hasWallBetween(origin, part)
+    if not origin or not part then
+        return true
+    end
+    local character = part.Parent
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    local ignore = { LocalPlayer.Character, character }
+    params.FilterDescendantsInstances = ignore
+    local delta = part.Position - origin
+    local result = Workspace:Raycast(origin, delta, params)
+    if not result then
+        return false
+    end
+    if character and result.Instance:IsDescendantOf(character) then
+        return false
+    end
+    return true
+end
+
+local function matchesAimbotTarget(player)
+    local mode = getFlag("AimbotTargetMode", "Sheriff")
+    if type(mode) == "table" then
+        mode = mode[1] or "Sheriff"
+    end
+    if isSpectator(player) then
+        return false
+    end
+    if mode == "Target" then
+        local wanted = string.lower(tostring(aimbotTargetName or getFlag("AimbotTargetInput", "") or ""))
+        if wanted == "" then
+            return false
+        end
+        return string.lower(player.Name) == wanted
+            or string.lower(player.DisplayName) == wanted
+            or string.sub(string.lower(player.Name), 1, #wanted) == wanted
+            or string.sub(string.lower(player.DisplayName), 1, #wanted) == wanted
+    end
+    local role = getRole(player)
+    if mode == "Murderer" or mode == "Murder" then
+        return role == "Murderer"
+    end
+    if mode == "Sheriff" then
+        return role == "Sheriff"
+    end
+    if mode == "Innocent" or mode == "Inno" then
+        return role == "Innocent"
+    end
+    return true
+end
 
 trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
     if processed then return end
@@ -1389,18 +1552,25 @@ local function getClosestPlayer()
     local mousePos = UserInputService:GetMouseLocation()
     local fov = tonumber(getFlag("AimbotFOV", 150)) or 150
     local targetPartName = getFlag("AimbotTargetPart", "Head") or "Head"
+    if type(targetPartName) == "table" then
+        targetPartName = targetPartName[1] or "Head"
+    end
+    local wallCheck = getFlag("AimbotWallCheck", true)
 
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
+        if player ~= LocalPlayer and player.Character and matchesAimbotTarget(player) then
             local targetPart = player.Character:FindFirstChild(targetPartName)
+                or player.Character:FindFirstChild("HumanoidRootPart")
             local hum = player.Character:FindFirstChildWhichIsA("Humanoid")
             if targetPart and hum and hum.Health > 0 then
-                local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
-                if onScreen then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < shortestDist and dist <= fov then
-                        shortestDist = dist
-                        closest = targetPart
+                if not wallCheck or not hasWallBetween(camera.CFrame.Position, targetPart) then
+                    local screenPos, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist < shortestDist and dist <= fov then
+                            shortestDist = dist
+                            closest = targetPart
+                        end
                     end
                 end
             end
@@ -1409,21 +1579,41 @@ local function getClosestPlayer()
     return closest
 end
 
--- Only runs work while aimbot is active + RMB held
 trackConnection(RunService.RenderStepped:Connect(function()
-    if not aimbotEnabled or not aiming then return end
-    local target = getClosestPlayer()
-    if not target then return end
+    if scriptUnloaded then
+        destroyFovCircle()
+        return
+    end
 
     local camera = Workspace.CurrentCamera
-    if not camera then return end
+    local showFov = getFlag("AimbotFOVCircle", true) and getFlag("EnableAimbot", true)
+    local fov = tonumber(getFlag("AimbotFOV", 150)) or 150
+    if showFov then
+        local circle = ensureFovCircle()
+        if circle then
+            local mousePos = UserInputService:GetMouseLocation()
+            circle.Position = Vector2.new(mousePos.X, mousePos.Y)
+            circle.Radius = fov
+            circle.Visible = true
+        end
+    elseif fovCircle then
+        fovCircle.Visible = false
+    end
+
+    if not aimbotEnabled or not aiming then
+        return
+    end
+    local target = getClosestPlayer()
+    if not target or not camera then
+        return
+    end
 
     local goalCFrame = CFrame.new(camera.CFrame.Position, target.Position)
     local smoothness = tonumber(getFlag("AimbotSmoothing", 0)) or 0
     if smoothness <= 0 then
         camera.CFrame = goalCFrame
     else
-        camera.CFrame = camera.CFrame:Lerp(goalCFrame, 1 / smoothness)
+        camera.CFrame = camera.CFrame:Lerp(goalCFrame, math.clamp(1 / smoothness, 0.02, 1))
     end
 end))
 
@@ -2114,7 +2304,7 @@ local function updatePlayer(player, force)
     local highlightsOn = getFlag("Highlights", true)
     local showInnocent = getFlag("ShowInnocentNames", true)
     local spectatorOn = getFlag("SpectatorESP", true)
-    local alive = player:GetAttribute("Alive") == true
+    local alive = not isSpectator(player)
     local role = alive and getRole(player) or "Spectator"
     local displayName = player.DisplayName
 
@@ -2695,18 +2885,49 @@ end)
 -- ============================
 -- TABS
 -- ============================
-local movementTab = window:CreateTab({ name = "Movement", icon = "move" })
+local homeTab = window:CreateTab({ name = "Home", icon = "home" })
+local mainTab = window:CreateTab({ name = "Main", icon = "layout-dashboard" })
 local combatTab = window:CreateTab({ name = "Combat", icon = "swords" })
-local farmTab = window:CreateTab({ name = "Farm", icon = "coins" })
-local espTab = window:CreateTab({ name = "ESP", icon = "scan-eye" })
-local playersTab = window:CreateTab({ name = "Players", icon = "users" })
-local lobbyTab = window:CreateTab({ name = "Lobby", icon = "map" })
-local funTab = window:CreateTab({ name = "Fun", icon = "sparkles" })
+local visualsTab = window:CreateTab({ name = "Visuals", icon = "eye" })
 local miscTab = window:CreateTab({ name = "Misc", icon = "wrench" })
 local settingsTab = window:CreateTab({ name = "Settings", icon = "settings" })
 
+-- Keep old names as aliases so existing sections stay on the new tabs.
+local movementTab = mainTab
+local farmTab = mainTab
+local lobbyTab = mainTab
+local espTab = visualsTab
+local playersTab = miscTab
+local funTab = miscTab
+
 -- ============================
--- MOVEMENT TAB
+-- HOME TAB
+-- ============================
+homeTab:CreateSection({ name = "Overview" })
+
+homeTab:CreateStat({
+    name = "Version",
+    value = 4.5,
+    suffix = "",
+    compact = true,
+})
+
+homeTab:CreateToggle({
+    name = "Round HUD",
+    description = "Show your role, round status, and active coin count",
+    value = false,
+    flag = "RoundHUD",
+    callback = function(enabled)
+        if enabled then
+            updateRoundHud()
+        else
+            destroyRoundHud()
+        end
+    end,
+})
+
+-- ============================
+-- MAIN TAB
 -- ============================
 movementTab:CreateSection({ name = "Character Stats" })
 
@@ -2761,11 +2982,34 @@ combatTab:CreateSection({ name = "Aimbot" })
 
 combatTab:CreateToggle({
     name = "Enable Aimbot",
-    description = "Turn aimbot on or off. Hold Right Click to lock on.",
+    description = "Hold Right Click to lock on",
     value = true,
     flag = "EnableAimbot",
     callback = function(enabled)
         aimbotEnabled = enabled
+        if not enabled then
+            destroyFovCircle()
+        end
+    end,
+})
+
+combatTab:CreateDropdown({
+    name = "Aimbot Target",
+    options = { "Target", "Sheriff", "Murderer", "Innocent" },
+    value = "Sheriff",
+    multiSelect = false,
+    placeholder = "Who to lock onto",
+    flag = "AimbotTargetMode",
+    callback = function() end,
+})
+
+combatTab:CreateInput({
+    name = "Aimbot Username",
+    value = "",
+    placeholder = "Used when Aimbot Target is Target",
+    flag = "AimbotTargetInput",
+    callback = function(text)
+        aimbotTargetName = text or ""
     end,
 })
 
@@ -2777,6 +3021,26 @@ combatTab:CreateDropdown({
     placeholder = "Select target part",
     flag = "AimbotTargetPart",
     callback = function() end,
+})
+
+combatTab:CreateToggle({
+    name = "Wall Check",
+    description = "Do not lock onto people behind walls",
+    value = true,
+    flag = "AimbotWallCheck",
+    callback = function() end,
+})
+
+combatTab:CreateToggle({
+    name = "FOV Circle",
+    description = "Draw the aimbot FOV around your mouse",
+    value = true,
+    flag = "AimbotFOVCircle",
+    callback = function(enabled)
+        if not enabled then
+            destroyFovCircle()
+        end
+    end,
 })
 
 combatTab:CreateSlider({
@@ -3003,22 +3267,8 @@ espTab:CreateButton({
     end,
 })
 
-espTab:CreateToggle({
-    name = "Round HUD",
-    description = "Show your role, round status, and active coin count",
-    value = false,
-    flag = "RoundHUD",
-    callback = function(enabled)
-        if enabled then
-            updateRoundHud()
-        else
-            destroyRoundHud()
-        end
-    end,
-})
-
 -- ============================
--- FARM TAB
+-- FARM (Main tab)
 -- ============================
 farmTab:CreateSection({ name = "Automation" })
 
@@ -3249,7 +3499,7 @@ local function isAlivePlayer(player, character)
     local humanoid = character and character:FindFirstChildWhichIsA("Humanoid")
     return humanoid
         and humanoid.Health > 0
-        and player:GetAttribute("Alive") == true
+        and not isSpectator(player)
 end
 
 local function getKnifeTool()
@@ -4148,7 +4398,7 @@ settingsTab:CreateSection({ name = "About" })
 
 settingsTab:CreateStat({
     name = "Version",
-    value = 4.4,
+    value = 4.5,
     suffix = "",
     compact = true,
 })
@@ -4158,7 +4408,7 @@ settingsTab:CreateStat({
 -- ============================
 
 pcall(function()
-    window:Navigate("Movement")
+    window:Navigate("Home")
 end)
 
 window:Notify({
