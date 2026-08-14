@@ -1,21 +1,3 @@
--- Executors that inject into CoreGui get scanned by Roblox Locales.en-us
--- ("attempt to call a nil value" on CoreGui.<guid>.<id> Line 1). Hide the
--- injected script immediately so that scanner never treats it as a CoreScript.
-pcall(function()
-    if typeof(script) == "Instance" then
-        pcall(function()
-            script.Name = "\0"
-        end)
-        pcall(function()
-            if typeof(gethui) == "function" then
-                script.Parent = gethui()
-            elseif typeof(get_hidden_gui) == "function" then
-                script.Parent = get_hidden_gui()
-            end
-        end)
-    end
-end)
-
 local function missing(t, f, fallback)
     if type(f) == t then
         return f
@@ -55,8 +37,6 @@ isfolder = missing("function", isfolder)
 listfiles = missing("function", listfiles)
 getcustomasset = missing("function", getcustomasset or getsynasset)
 getconnections = missing("function", getconnections or get_signal_cons)
-gethui = missing("function", gethui or get_hidden_gui)
-protectgui = missing("function", protectgui or protect_gui or (syn and syn.protect_gui))
 
 local requiredExecutor = {
     { name = "writefile", fn = writefile, why = "Rayfield config auto-save" },
@@ -103,26 +83,6 @@ local TeleportService = cloneref(game:GetService("TeleportService"))
 local GuiService = cloneref(game:GetService("GuiService"))
 local LocalPlayer = Players.LocalPlayer
 local Workspace = cloneref(game:GetService("Workspace"))
-
-local function getHiddenUi()
-    if gethui then
-        local ok, hui = pcall(gethui)
-        if ok and hui then
-            return hui
-        end
-    end
-    local playerGui = LocalPlayer and LocalPlayer:FindFirstChildWhichIsA("PlayerGui")
-    if playerGui then
-        return playerGui
-    end
-    local ok, core = pcall(function()
-        return cloneref(game:GetService("CoreGui"))
-    end)
-    if ok then
-        return core
-    end
-    return nil
-end
 
 getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 
@@ -250,9 +210,6 @@ local function sweepScriptGuis()
     local parents = {}
     pcall(function()
         table.insert(parents, cloneref(game:GetService("CoreGui")))
-    end)
-    pcall(function()
-        table.insert(parents, getHiddenUi())
     end)
     pcall(function()
         table.insert(parents, LocalPlayer:FindFirstChildOfClass("PlayerGui"))
@@ -2123,18 +2080,16 @@ local function getEspFolder()
     if espFolder and espFolder.Parent then
         return espFolder
     end
-    local parent = getHiddenUi()
+    local parent
+    pcall(function()
+        parent = cloneref(game:GetService("CoreGui"))
+    end)
     if not parent then
         parent = LocalPlayer:FindFirstChildWhichIsA("PlayerGui") or PlayerGui
     end
     espFolder = Instance.new("Folder")
     espFolder.Name = "MM2EnhancedESP"
-    if protectgui then
-        pcall(protectgui, espFolder)
-    end
-    pcall(function()
-        espFolder.Parent = parent
-    end)
+    espFolder.Parent = parent
     return espFolder
 end
 
