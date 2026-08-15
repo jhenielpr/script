@@ -2,6 +2,31 @@
     flags = {}
   }
   library.Flags = library.flags
+  library.FlagSetters = {}
+  library.AutoSaveEnabled = false
+  library.SuppressSave = false
+  library.ConfigFolder = "MM2Enhanced"
+  library.ConfigName = "MM2Enhanced"
+  library.LastWindow = nil
+  library._saveQueued = false
+
+  function library:QueueAutoSave()
+    if library.SuppressSave or not library.AutoSaveEnabled then
+      return
+    end
+    if library._saveQueued then
+      return
+    end
+    library._saveQueued = true
+    task.delay(0.4, function()
+      library._saveQueued = false
+      if library.LastWindow then
+        pcall(function()
+          library.LastWindow:Save(library.ConfigName)
+        end)
+      end
+    end)
+  end
   
   --// Dependences --//
   local CoreGui = game:GetService("CoreGui")
@@ -501,12 +526,13 @@ end
   end
 
   function WindowTable:Save(name)
-    name = name or "MM2Enhanced"
+    name = name or library.ConfigName or "MM2Enhanced"
     if type(writefile) ~= "function" then
       return false
     end
-    if type(makefolder) == "function" and not (isfolder and isfolder("MM2Enhanced")) then
-      pcall(makefolder, "MM2Enhanced")
+    local folder = library.ConfigFolder or "MM2Enhanced"
+    if type(makefolder) == "function" and not (isfolder and isfolder(folder)) then
+      pcall(makefolder, folder)
     end
     local HttpService = game:GetService("HttpService")
     local ok, encoded = pcall(function()
@@ -515,17 +541,18 @@ end
     if not ok then
       return false
     end
-    local path = "MM2Enhanced/" .. name .. ".json"
+    local path = folder .. "/" .. name .. ".json"
     local wrote = pcall(writefile, path, encoded)
     return wrote
   end
 
   function WindowTable:Load(name)
-    name = name or "MM2Enhanced"
+    name = name or library.ConfigName or "MM2Enhanced"
     if type(readfile) ~= "function" or type(isfile) ~= "function" then
       return false
     end
-    local path = "MM2Enhanced/" .. name .. ".json"
+    local folder = library.ConfigFolder or "MM2Enhanced"
+    local path = folder .. "/" .. name .. ".json"
     if not isfile(path) then
       return false
     end
@@ -536,11 +563,19 @@ end
     if not ok or type(decoded) ~= "table" then
       return false
     end
+    library.SuppressSave = true
     for flag, value in pairs(decoded) do
       library.Flags[flag] = value
+      local setter = library.FlagSetters[flag]
+      if type(setter) == "function" then
+        pcall(setter, value)
+      end
     end
+    library.SuppressSave = false
     return true
   end
+
+  library.LastWindow = WindowTable
   
   function WindowTable:Tab(TabArgs)
   TabArgs.Text = TabArgs.Text or "Tab"
@@ -815,6 +850,7 @@ end
     State = bool
     if CheckArgs.Flag ~= nil then
         library.Flags[CheckArgs.Flag] = bool
+        library:QueueAutoSave()
     end
     
     if State then
@@ -823,6 +859,12 @@ end
     else
         Utilities:Tween(Check.CheckFrame.UIStroke, .125, {Color = Colors.Divider})
         Utilities:Tween(Check.CheckFrame.CheckInner, .125, {BackgroundColor3 = Colors.Secondary})
+    end
+  end
+
+  if CheckArgs.Flag then
+    library.FlagSetters[CheckArgs.Flag] = function(value)
+      CheckTable:Set(value == true)
     end
   end
 
@@ -1037,6 +1079,7 @@ end
             Utilities:Tween(Slider.SliderOuter.SliderInner, 0.09, {Size = UDim2.new(SizeX,0,1,0)})
             if Info.Flag then
                 library.Flags[Info.Flag] = FinalValue
+                library:QueueAutoSave()
             end
             Slider.SliderOuter.SliderValueText.Text = StepFormat:format(FinalValue)..Info.Postfix
             task.spawn(Info.Callback, FinalValue)
@@ -1048,6 +1091,19 @@ end
             end
         end)
     end)
+
+    if Info.Flag then
+        library.Flags[Info.Flag] = Rounded
+        library.FlagSetters[Info.Flag] = function(value)
+            local n = tonumber(value) or Rounded
+            n = math.clamp(Utilities:Round(n, Info.Incrementation), Info.Minimum, Info.Maximum)
+            local scale = (n - Info.Minimum) / (Info.Maximum - Info.Minimum)
+            Utilities:Tween(Slider.SliderOuter.SliderInner, 0.09, {Size = UDim2.new(scale, 0, 1, 0)})
+            Slider.SliderOuter.SliderValueText.Text = StepFormat:format(n) .. Info.Postfix
+            library.Flags[Info.Flag] = n
+            task.spawn(Info.Callback, n)
+        end
+    end
   end
 
   function SectionTable:Label(Info)
@@ -1234,9 +1290,27 @@ end
 
     function DropdownTable:Select(v)
         task.spawn(Info.Callback, v)
+        if Info.Flag then
+            library.Flags[Info.Flag] = v
+            library:QueueAutoSave()
+        end
 
         if Info.ChangeText then
             Dropdown.DropdownFrame.DropdownText.Text = v
+        end
+    end
+
+    if Info.Flag then
+        library.FlagSetters[Info.Flag] = function(value)
+            if type(value) == "table" then
+                value = value[1]
+            end
+            if value ~= nil then
+                DropdownTable:Select(value)
+            end
+        end
+        if Info.Default then
+            library.Flags[Info.Flag] = Info.Default
         end
     end
 
@@ -1409,12 +1483,19 @@ end
 
     if Info.Flag then
         library.Flags[Info.Flag] = Info.Default
+        library.FlagSetters[Info.Flag] = function(value)
+            local text = tostring(value or "")
+            Box.InputFrame.InputBox.Text = text
+            library.Flags[Info.Flag] = text
+            task.spawn(Info.Callback, text)
+        end
     end
 
     Box.InputFrame.InputBox.FocusLost:Connect(function()
         local text = Box.InputFrame.InputBox.Text
         if Info.Flag then
             library.Flags[Info.Flag] = text
+            library:QueueAutoSave()
         end
         task.spawn(Info.Callback, text)
     end)
@@ -1506,6 +1587,11 @@ end
 
     if Info.Flag then
         library.Flags[Info.Flag] = bindLabel(current)
+        library.FlagSetters[Info.Flag] = function(value)
+            current = parseBind(value)
+            Bind.BindFrame.BindText.Text = bindLabel(current)
+            library.Flags[Info.Flag] = bindLabel(current)
+        end
     end
 
     Bind.BindFrame.BindButton.MouseButton1Click:Connect(function()
@@ -1539,6 +1625,7 @@ end
             Bind.BindFrame.BindText.Text = bindLabel(current)
             if Info.Flag then
                 library.Flags[Info.Flag] = bindLabel(current)
+                library:QueueAutoSave()
             end
             listening = false
             pcall(Info.Callback, current)

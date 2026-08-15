@@ -115,7 +115,14 @@ function window:CreateTab(config)
             Text = element.name,
             Flag = element.flag,
             Default = element.value == true,
-            Callback = element.callback or function() end,
+            Callback = function(enabled)
+                if element.flag then
+                    flagValues[element.flag] = enabled == true
+                end
+                if element.callback then
+                    element.callback(enabled)
+                end
+            end,
         })
     end
 
@@ -245,6 +252,7 @@ local Settings = {
     CoinPickupRange = 100,
     CoinTeleportDelay = 0.05,
     InvisibleHipHeight = 0.08,
+    FarmHipHeight = 0.08,
     HitboxSize = 5,
     BringMode = "All",
     AutoFling = false,
@@ -418,6 +426,8 @@ local function unloadScript()
       flagValues.AutoCoins = false
       flagValues.AutoGunDrop = false
       flagValues.FarmNoRender = false
+      flagValues.FarmInvisible = false
+      flagValues.AutoRejoin = false
       flagValues.EnableHitboxes = false
       flagValues.EnableESP = false
       flagValues.CoinESP = false
@@ -764,11 +774,65 @@ local function set3dRenderingEnabled(enabled)
     end)
 end
 
+local farmHipStored = nil
+local farmInvisOwned = false
+
+local function applyFarmStealth()
+    local farmActive = getFlag("AutoCoins", false) or getFlag("AutoGunDrop", false)
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local farmHeight = asNumber(getFlag("FarmHipHeight", Settings.FarmHipHeight), Settings.FarmHipHeight)
+
+    if farmActive then
+        if humanoid then
+            if farmHipStored == nil then
+                farmHipStored = humanoid.HipHeight
+            end
+            pcall(function()
+                humanoid.HipHeight = farmHeight
+            end)
+        end
+        if getFlag("FarmInvisible", false) then
+            if not farmInvisOwned and not getFlag("Invisible", false) then
+                farmInvisOwned = true
+                if enableInvisible then
+                    pcall(enableInvisible)
+                end
+                if humanoid then
+                    pcall(function()
+                        humanoid.HipHeight = farmHeight
+                    end)
+                end
+            end
+        elseif farmInvisOwned then
+            farmInvisOwned = false
+            if not getFlag("Invisible", false) then
+                pcall(disableInvisible)
+            end
+        end
+        return
+    end
+
+    if farmInvisOwned then
+        farmInvisOwned = false
+        if not getFlag("Invisible", false) then
+            pcall(disableInvisible)
+        end
+    end
+    if humanoid and farmHipStored ~= nil and not getFlag("Invisible", false) then
+        pcall(function()
+            humanoid.HipHeight = farmHipStored
+        end)
+    end
+    farmHipStored = nil
+end
+
 -- Disable 3D rendering while farming when the Farm tab toggle is on (lowers CPU).
 applyFarmRendering = function()
     local farmActive = getFlag("AutoCoins", false) or getFlag("AutoGunDrop", false)
     local noRender = getFlag("FarmNoRender", false)
     set3dRenderingEnabled(not (farmActive and noRender))
+    applyFarmStealth()
 end
 
 -- WindUI sliders sometimes pass a table or string â€” always normalize to number
@@ -3851,6 +3915,47 @@ farmTab:CreateToggle({
     end,
 })
 
+farmTab:CreateToggle({
+    name = "Farm Invisible Animation",
+    description = "Play the Invisible Me emote while Auto Coin Farm or Auto Gun Pickup is on",
+    value = false,
+    flag = "FarmInvisible",
+    callback = function(enabled)
+        getgenv().MM2EnhancedPersist.FarmInvisible = enabled == true
+        applyFarmRendering()
+    end,
+})
+
+farmTab:CreateSlider({
+    name = "Farm HipHeight",
+    description = "Hip height used while auto farm is running",
+    range = { 0, 2 },
+    increment = 0.01,
+    value = 0.08,
+    suffix = "",
+    flag = "FarmHipHeight",
+    callback = function(value)
+        local normalized = asNumber(value, 0.08)
+        Settings.FarmHipHeight = normalized
+        getgenv().MM2EnhancedPersist.FarmHipHeight = normalized
+        applyFarmRendering()
+    end,
+})
+
+farmTab:CreateDropdown({
+    name = "On Kick (Farm)",
+    description = "When kicked while farming: stay off, rejoin the place, or hop servers",
+    options = { "Off", "Rejoin", "Server Hop" },
+    value = "Off",
+    flag = "FarmKickAction",
+    callback = function(selected)
+        if type(selected) == "table" then
+            selected = selected[1]
+        end
+        getgenv().MM2EnhancedPersist.FarmKickAction = selected or "Off"
+    end,
+})
+
 farmTab:CreateButton({
     name = "Get Gun from Ground",
     description = "Teleport to the dropped gun once",
@@ -3885,9 +3990,22 @@ farmTab:CreateToggle({
 
 do
     local persist = getgenv().MM2EnhancedPersist
+    if persist.FarmHipHeight then
+        Settings.FarmHipHeight = asNumber(persist.FarmHipHeight, Settings.FarmHipHeight)
+        flagValues.FarmHipHeight = Settings.FarmHipHeight
+    end
+    if persist.FarmKickAction then
+        flagValues.FarmKickAction = persist.FarmKickAction
+    end
     if persist.FarmNoRender then
         flagValues.FarmNoRender = true
         applyFarmRendering()
+    end
+    if persist.FarmInvisible then
+        flagValues.FarmInvisible = true
+    end
+    if persist.AutoRejoin then
+        flagValues.AutoRejoin = true
     end
     if persist.AutoCoins then
         flagValues.AutoCoins = true
@@ -4710,6 +4828,16 @@ miscTab:CreateToggle({
     end,
 })
 
+miscTab:CreateToggle({
+    name = "Auto Rejoin",
+    description = "Infinite Yield style: rejoin the place if you get kicked or disconnected. Off by default.",
+    value = false,
+    flag = "AutoRejoin",
+    callback = function(enabled)
+        getgenv().MM2EnhancedPersist.AutoRejoin = enabled == true
+    end,
+})
+
 miscTab:CreateSection({ name = "Server" })
 
 miscTab:CreateButton({
@@ -4792,41 +4920,109 @@ miscTab:CreateButton({
 })
 
 local farmRejoinQueued = false
-local function shouldAutoRejoinOnKick()
+
+local function farmKickMode()
+    local persist = getgenv().MM2EnhancedPersist
+    local mode = getFlag("FarmKickAction", persist and persist.FarmKickAction or "Off")
+    if type(mode) == "table" then
+        mode = mode[1]
+    end
+    return mode or "Off"
+end
+
+local function farmingNow()
     local persist = getgenv().MM2EnhancedPersist
     return getFlag("AutoCoins", false)
         or getFlag("AutoGunDrop", false)
         or (persist and (persist.AutoCoins or persist.AutoGunDrop))
 end
 
-local function rejoinAfterKick()
-    if farmRejoinQueued or scriptUnloaded or not shouldAutoRejoinOnKick() then
+local function shouldHandleKick()
+    if getFlag("AutoRejoin", false) or (getgenv().MM2EnhancedPersist and getgenv().MM2EnhancedPersist.AutoRejoin) then
+        return true
+    end
+    if farmingNow() and farmKickMode() ~= "Off" then
+        return true
+    end
+    return false
+end
+
+local function hopToNewServer()
+    local HttpService = game:GetService("HttpService")
+    local success, servers = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        ))
+    end)
+    if success and servers and servers.data then
+        for _, server in ipairs(servers.data) do
+            if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                return true
+            end
+        end
+    end
+    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    return false
+end
+
+local function queueScriptPersist()
+    local enqueue = queueteleport
+    if not enqueue then
         return
     end
-    farmRejoinQueued = true
-    pcall(function()
-        local enqueue = queueteleport
-        if enqueue then
-            local persist = getgenv().MM2EnhancedPersist
-            enqueue(string.format([[
+    local persist = getgenv().MM2EnhancedPersist or {}
+    enqueue(string.format([[
 getgenv().MM2EnhancedPersist = getgenv().MM2EnhancedPersist or {}
 getgenv().MM2EnhancedPersist.AutoCoins = %s
 getgenv().MM2EnhancedPersist.AutoGunDrop = %s
 getgenv().MM2EnhancedPersist.FarmNoRender = %s
-]], tostring(persist.AutoCoins == true), tostring(persist.AutoGunDrop == true), tostring(persist.FarmNoRender == true)))
-        end
-    end)
+getgenv().MM2EnhancedPersist.FarmInvisible = %s
+getgenv().MM2EnhancedPersist.FarmHipHeight = %s
+getgenv().MM2EnhancedPersist.FarmKickAction = %q
+getgenv().MM2EnhancedPersist.AutoRejoin = %s
+loadstring(game:HttpGet("https://raw.githubusercontent.com/jhenielpr/script/main/script.lua"))()
+]],
+        tostring(persist.AutoCoins == true),
+        tostring(persist.AutoGunDrop == true),
+        tostring(persist.FarmNoRender == true),
+        tostring(persist.FarmInvisible == true),
+        tostring(tonumber(persist.FarmHipHeight) or Settings.FarmHipHeight),
+        tostring(persist.FarmKickAction or farmKickMode() or "Off"),
+        tostring(persist.AutoRejoin == true)
+    ))
+end
+
+local function rejoinAfterKick()
+    if farmRejoinQueued or scriptUnloaded or not shouldHandleKick() then
+        return
+    end
+    farmRejoinQueued = true
+    pcall(queueScriptPersist)
+    local mode = farmKickMode()
+    local useHop = farmingNow() and mode == "Server Hop"
     pcall(function()
-        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        if useHop then
+            hopToNewServer()
+        else
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end
     end)
 end
 
 trackConnection(GuiService.ErrorMessageChanged:Connect(function()
-    local message = ""
+    local kicked = false
     pcall(function()
-        message = tostring(GuiService:GetErrorMessage() or "")
+        local message = tostring(GuiService:GetErrorMessage() or "")
+        local code = GuiService:GetErrorCode()
+        if message ~= "" then
+            kicked = true
+        end
+        if code and code ~= Enum.ConnectionError.OK then
+            kicked = true
+        end
     end)
-    if message ~= "" then
+    if kicked then
         rejoinAfterKick()
     end
 end))
@@ -4938,6 +5134,19 @@ settingsTab:CreateDropdown({
 
 settingsTab:CreateSection({ name = "Configuration" })
 
+settingsTab:CreateToggle({
+    name = "Auto Save / Auto Load",
+    description = "Load last config on execute and save whenever a setting changes",
+    value = true,
+    flag = "AutoSaveConfig",
+    callback = function(enabled)
+        library.AutoSaveEnabled = enabled == true
+        if enabled then
+            window:Save()
+        end
+    end,
+})
+
 settingsTab:CreateButton({
     name = "Save Configuration",
     callback = function()
@@ -5011,6 +5220,13 @@ settingsTab:CreateStat({
 -- ============================
 -- INIT
 -- ============================
+
+pcall(function()
+    library.SuppressSave = true
+    window:Load()
+    library.SuppressSave = false
+    library.AutoSaveEnabled = getFlag("AutoSaveConfig", true)
+end)
 
 pcall(function()
     window:Navigate("Home")
